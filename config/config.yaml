@@ -1,0 +1,132 @@
+# Author: Abdallah Kamhawi <Kamhawi@umich.edu>
+# Package Maintainer: Abdallah Kamhawi <Kamhawi@umich.edu>
+
+# =============================================================================
+# Barrel Vault 3D Concrete Printing Simulation Configuration
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Geometry Parameters
+# -----------------------------------------------------------------------------
+geometry:
+  span: 1000.0          # Vault span/width [mm]
+  length: 1000.0        # Vault length/extrusion direction [mm]
+  rise: 240.0           # Vault rise/height at crown [mm]
+  thickness: 25.0       # Shell thickness [mm]
+
+# -----------------------------------------------------------------------------
+# Mesh Discretization
+# -----------------------------------------------------------------------------
+mesh:
+  n_length: 100        # Divisions along length
+  n_span: 60           # Divisions along span
+  n_thickness: 3        # Divisions through thickness
+
+# -----------------------------------------------------------------------------
+# Rheology Inputs 
+# -----------------------------------------------------------------------------
+material:
+  tau_0: 2500.0         # Initial static yield stress right out of the nozzle [Pa]
+  A_thix: 150.0         # Structuration rate for 2K system [Pa/s]
+  mu_p: 200.0           # Plastic viscosity [Pa*s] (Typical Bingham viscosity)
+  gamma_c: 0.01         # Critical strain [-] (Typical for fresh concrete)
+  rho: 2250.0           # Density [kg/m^3] (Mortars are slightly lighter than coarse concrete)
+  g: 9810.0             # Gravitational acceleration [mm/s^2]
+
+# -----------------------------------------------------------------------------
+# Transition / Hardening Inputs
+# -----------------------------------------------------------------------------
+hardening:
+  t_set: 300.0          # Initial setting time [s] (5 minutes is typical for accelerated 2K)
+  E_inf: 30000.0        # Fully hardened Young's modulus [MPa] (Mortars lack coarse aggregate)
+  nu_fresh: 0.48        # Poisson's ratio at birth [-] (Nearly incompressible)
+  nu_hard: 0.20         # Poisson's ratio hardened [-]
+  n_h: 1.15             # Hydration exponent after t_set [-]
+
+# -----------------------------------------------------------------------------
+# Interface Parameters
+# -----------------------------------------------------------------------------
+interface:
+  gamma_bonded_mult: 40.0       # Intra-layer SIP penalty multiplier
+  gamma_boundary_mult: 300.0    # Dirichlet BC penalty multiplier
+
+  G_Ic: 0.08                    # Mode I fracture energy [N/mm]
+  G_IIc: 0.14                   # Mode II fracture energy [N/mm]
+  eta_BK: 1.5                   # Benzeggagh-Kenane exponent [-]
+  nozzle_pressure: 70000.0      # Nozzle deposition pressure [Pa]
+  residual_stiffness_ratio: 0.05
+  K_min_mult: 0.1               # Lower bound multiplier for cohesive stiffness: K_min = K_min_mult * E/h
+
+# -----------------------------------------------------------------------------
+# Activation Parameters
+# -----------------------------------------------------------------------------
+activation:
+  tcp_speed: 190.0      # Tool center point (print head) speed [mm/s]
+  sharpness: 1.0        # Tanh activation steepness [-]
+  alpha_min: 1.0e-10    # Minimum stiffness multiplier for inactive cells [-]
+
+# -----------------------------------------------------------------------------
+# Boundary Conditions
+# -----------------------------------------------------------------------------
+boundary_conditions:
+  intrados_dirichlet_upto_layer: 2  # 0-based, inclusive
+
+# -----------------------------------------------------------------------------
+# Solver Parameters
+# -----------------------------------------------------------------------------
+solver:
+  max_iterations: 1000   # Maximum Newton iterations per step
+  rtol: 1.0e-6          # Relative tolerance
+  atol: 1.0e-10         # Absolute tolerance
+  linear_solver: direct   # direct | iterative | iterative_with_direct_fallback
+  direct:
+    mumps_icntl_14: 200   # MUMPS extra workspace percentage
+  iterative:
+    ksp_type: gmres       # PETSc KSP type (e.g., gmres, bicgstab)
+    pc_type: bjacobi      # Block Jacobi: each MPI rank factors its local block
+    sub_pc_type: ilu      # Sub-preconditioner per block (ilu is standard for DG)
+    ilu_levels: 0         # ILU fill level: 0=cheapest, 1-2=better quality
+    rtol: 1.0e-8          # Linear solve relative tolerance
+    atol: 1.0e-12         # Linear solve absolute tolerance
+    max_it: 500           # Linear solve max iterations
+    gmres_restart: 200    # GMRES restart depth (must exceed expected iteration count)
+
+# -----------------------------------------------------------------------------
+# Time Stepping
+# -----------------------------------------------------------------------------
+time_stepping:
+  n_steps: 300       # Number of time steps
+  start_offset: 0.1     # Offset from minimum birth time [s]
+  end_multiplier: 1.05  # Multiplier for maximum birth time
+
+# -----------------------------------------------------------------------------
+# Checkpoint / Restart
+# -----------------------------------------------------------------------------
+checkpoint:
+  save_every: 10             # Save every N steps (overwrites single latest checkpoint file)
+  resume_enabled: false       # Resume from latest checkpoint metadata if true
+  directory: "checkpoints"   # Checkpoint directory
+
+# -----------------------------------------------------------------------------
+# Output Settings
+# -----------------------------------------------------------------------------
+output:
+  directory: "output"
+  displacement_file: ""          # Optional override (blank -> disp.bp in output/run_<YYMMDD_HHMMSS>/)
+  cell_data_file: ""             # Optional override (blank -> cell_data.bp in output/run_<YYMMDD_HHMMSS>/)
+  log_file: ""                   # Optional override (blank -> sim_run.log in output/run_<YYMMDD_HHMMSS>/)
+
+# -----------------------------------------------------------------------------
+# Debug (all optional)
+# -----------------------------------------------------------------------------
+debug:
+  collective_debug: false        # Probe MPI-collective points inside Newton
+  collective_debug_max_iter: 3   # Only probe the first N Newton iterations
+  collective_debug_barrier: false  # Add barrier after each probe print
+  output_io: false                # Probe enter/exit around VTX output writes
+  step_setup: false             # Probe rank progress in pre-solver step setup
+  step_setup_max_steps: 3       # Only print setup probes for first N steps
+  newton_memory_tracking: true    # Print Newton memory table each tracked iter
+  newton_memory_every_iter: 1     # Emit memory line every N Newton iterations
+  newton_memory_collect_garbage: false  # Run Python GC before memory snapshots
+  newton_memory_track_mumps: false  # Include MUMPS INFOG(16/26/29) stats (direct solver only)
