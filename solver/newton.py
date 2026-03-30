@@ -46,6 +46,20 @@ class NewtonLinearWorkspace:
         # 0: assemble_matrix(form, mat=A), 1: assemble_matrix(A, form), 2: assemble_matrix(form, A)
         self.assemble_mode = 0
 
+        # --- Active-DOF reduction state ---
+        self.use_reduction = (
+            bool(self.solver_cfg.get("active_dof_reduction", False))
+            and self.linear_solver_mode == "iterative"
+        )
+        self._is_active = None   # PETSc IS for active owned DOFs
+        self._A_red = None       # Reduced Jacobian (submatrix)
+        self._b_red = None       # Reduced RHS vector
+        self._du_red = None      # Reduced solution vector
+        self._ksp_red = None     # KSP for reduced system
+        if self.use_reduction:
+            self._ksp_red = PETSc.KSP().create(self.comm)
+            self._configure_reduced_ksp()
+
     @staticmethod
     def _resolve_linear_solver_mode(mode):
         """Normalize configured linear solver mode."""
@@ -78,6 +92,65 @@ class NewtonLinearWorkspace:
             self.A = assemble_matrix(J_form)
             self.A.assemble()
             self.assemble_mode = 0
+
+    def _configure_reduced_ksp(self):
+        """Configure the reduced-system KSP with the same iterative settings."""
+        iterative_cfg = self.solver_cfg.get("iterative", {})
+        ksp = self._ksp_red
+        ksp_type = str(iterative_cfg.get("ksp_type", "gmres")).strip().lower()
+        pc_type = str(iterative_cfg.get("pc_type", "bjacobi")).strip().lower()
+        ksp_rtol = float(iterative_cfg.get("rtol", 1.0e-8))
+        ksp_atol = float(iterative_cfg.get("atol", 1.0e-12))
+        ksp_max_it = int(iterative_cfg.get("max_it", 500))
+        gmres_restart = int(iterative_cfg.get("gmres_restart", 200))
+
+        ksp.setType(ksp_type)
+        pc = ksp.getPC()
+        pc.setType(pc_type)
+        ksp.setTolerances(rtol=ksp_rtol, atol=ksp_atol, max_it=ksp_max_it)
+        if ksp_type in ("gmres", "fgmres") and gmres_restart > 0:
+            ksp.setGMRESRestart(gmres_restart)
+
+        # Set prefix BEFORE setting options so PETSc maps them correctly.
+        ksp.setOptionsPrefix("red_")
+
+        opts = PETSc.Options()
+        sub_pc_type = str(iterative_cfg.get("sub_pc_type", "ilu")).strip().lower()
+        ilu_levels = int(iterative_cfg.get("ilu_levels", 0))
+        if pc_type in ("bjacobi", "asm"):
+            opts.setValue("-red_sub_ksp_type", "preonly")
+            opts.setValue("-red_sub_pc_type", sub_pc_type)
+            if sub_pc_type == "ilu" and ilu_levels >= 0:
+                opts.setValue("-red_sub_pc_factor_levels", str(ilu_levels))
+            opts.setValue("-red_sub_pc_factor_shift_type", "nonzero")
+            opts.setValue("-red_sub_pc_factor_shift_amount", "1e-4")
+            if pc_type == "asm":
+                opts.setValue("-red_sub_pc_factor_zeropivot", "1e-6")
+                opts.setValue("-red_sub_pc_factor_mat_ordering_type", "rcm")
+                overlap = int(iterative_cfg.get("asm_overlap", 1))
+                opts.setValue("-red_pc_asm_overlap", str(overlap))
+        ksp.setFromOptions()
+
+    def destroy_reduced(self):
+        """Release PETSc objects for the reduced system (between steps).
+
+        The reduced KSP is reset so it accepts a new matrix size next step.
+        """
+        if self._is_active is not None:
+            self._is_active.destroy()
+            self._is_active = None
+        if self._A_red is not None:
+            self._A_red.destroy()
+            self._A_red = None
+        if self._b_red is not None:
+            self._b_red.destroy()
+            self._b_red = None
+        if self._du_red is not None:
+            self._du_red.destroy()
+            self._du_red = None
+        if self._ksp_red is not None:
+            self._ksp_red.reset()
+            self._configure_reduced_ksp()
 
     def _configure_direct_solver(self):
         """Configure KSP/PC for direct LU+MUMPS solves.
@@ -216,6 +289,10 @@ class NewtonLinearWorkspace:
     def destroy(self):
         """Release PETSc objects held by this workspace."""
         self._factor_mat = None
+        self.destroy_reduced()
+        if self._ksp_red is not None:
+            self._ksp_red.destroy()
+            self._ksp_red = None
         try:
             self.pc.reset()
         except Exception:
@@ -251,6 +328,20 @@ def get_inactive_dofs(t_val, birth_times, cell_to_dofs):
         return np.array([], dtype=np.int32)
     inactive_dofs = np.unique(cell_to_dofs[inactive_cells].reshape(-1))
     return inactive_dofs.astype(np.int32, copy=False)
+
+
+def get_active_dofs_owned(inactive_dofs, num_owned_dofs):
+    """Return sorted owned active DOF indices (complement of inactive within owned range).
+
+    Args:
+        inactive_dofs: Owned inactive DOF indices (already filtered to < num_owned_dofs).
+        num_owned_dofs: Number of locally owned DOFs on this rank.
+
+    Returns:
+        np.ndarray: Sorted active owned DOF ids as ``int32``.
+    """
+    all_owned = np.arange(num_owned_dofs, dtype=np.int32)
+    return np.setdiff1d(all_owned, inactive_dofs)
 
 
 def pin_inactive_dofs(A, b, inactive_dofs):
@@ -700,6 +791,7 @@ def solve_newton(
         _memory_snapshot(-1, "cleanup-pre")
         workspace.A = A
         workspace.assemble_mode = assemble_mode
+        workspace.destroy_reduced()
         if destroy_workspace:
             workspace.destroy()
             workspace.A = None
@@ -732,12 +824,49 @@ def solve_newton(
                 f" (peak: {_bytes_to_gib(_peak_rss_bytes()):.3f} GiB)"
             )
 
-    # Both iterative and direct modes solve on the full pinned system.
-    # Inactive DOFs are pinned to identity rows each Newton iteration.
+    # Determine whether to use active-DOF reduction for this step.
     is_iterative = workspace.linear_solver_mode == "iterative"
+    use_reduction = (
+        workspace.use_reduction
+        and n_inactive > 0
+        and n_active > 0
+    )
+
     first_ksp_its = 0
     pc_lagged = False
-    ksp.setOperators(A)
+
+    if use_reduction:
+        # Build active DOF index set for submatrix extraction.
+        active_dofs_owned = get_active_dofs_owned(inactive_dofs, num_owned_dofs)
+        workspace.destroy_reduced()  # Clean up previous step's reduced objects.
+
+        # Convert local owned DOF indices to global indices for distributed
+        # submatrix extraction.  Local vector DOF i corresponds to global
+        # block (i // bs) mapped via index_map, then re-expanded.
+        bs = V.dofmap.bs
+        imap = V.dofmap.index_map
+        # Scalar (block) indices of the active owned DOFs.
+        active_blocks_local = np.unique(active_dofs_owned // bs)
+        active_blocks_global = imap.local_to_global(
+            active_blocks_local.astype(np.int32)
+        )
+        # Expand back to interleaved vector DOF global indices.
+        active_global = (
+            active_blocks_global[:, None] * bs
+            + np.arange(bs, dtype=np.int64)[None, :]
+        ).reshape(-1)
+
+        workspace._is_active = PETSc.IS().createGeneral(
+            active_global.astype(PETSc.IntType), comm=msh.comm,
+        )
+        ksp_solve = workspace._ksp_red
+        pc_solve = ksp_solve.getPC()
+        if debug:
+            _live_print(f"  [REDUCTION] Solving {n_active} active DOFs (reduced from {n_total})")
+    else:
+        ksp.setOperators(A)
+        ksp_solve = ksp
+        pc_solve = pc
 
     for iteration in range(max_iter):
         probe_iter = collective_debug and (iteration < collective_debug_max_iter)
@@ -864,40 +993,82 @@ def solve_newton(
 
         jac_time_asm = _time.time() - jac_t0
 
-        # Pin inactive DOFs to identity rows in both iterative and direct modes.
-        pin_inactive_dofs(A, b, inactive_dofs)
+        if use_reduction:
+            # --- Extract reduced system and solve ---
+            is_act = workspace._is_active
+            if workspace._A_red is None:
+                workspace._A_red = A.createSubMatrix(is_act, is_act)
+            else:
+                A.createSubMatrix(is_act, is_act, submat=workspace._A_red)
 
-        # PC lagging for iterative mode: fresh PC on first iteration,
-        # reuse from iteration 1 onward to avoid redundant refactorization.
-        if is_iterative:
+            # PC lagging on the reduced KSP.
             if iteration == 0:
-                pc.setReusePreconditioner(False)
+                pc_solve.setReusePreconditioner(False)
                 pc_lagged = False
             elif iteration == 1 and not pc_lagged:
-                pc.setReusePreconditioner(True)
+                pc_solve.setReusePreconditioner(True)
                 pc_lagged = True
 
-        jac_time = _time.time() - jac_t0
-        _memory_snapshot(iteration, "post-jacobian")
+            jac_time = _time.time() - jac_t0
+            _memory_snapshot(iteration, "post-jacobian")
 
-        if debug and iteration == 0:
-            _live_print(f"  │  Jacobian: asm={jac_time_asm:.2f}s total={jac_time:.2f}s")
+            if debug and iteration == 0:
+                _live_print(f"  │  Jacobian: asm={jac_time_asm:.2f}s total={jac_time:.2f}s (reduced)")
 
-        # --- Solve linear system ---
-        du.x.array[:] = 0.0
+            # Build reduced RHS and solution vectors from the submatrix.
+            if workspace._b_red is None:
+                workspace._b_red = workspace._A_red.createVecRight()
+                workspace._du_red = workspace._A_red.createVecRight()
 
-        _memory_snapshot(iteration, "pre-ksp-solve")
-        ksp.solve(b, du.x.petsc_vec)
-        ksp_reason = ksp.getConvergedReason()
-        _memory_snapshot(iteration, "post-ksp-solve")
+            # Copy active entries from full residual into reduced RHS.
+            workspace._b_red.array[:] = b.array[active_dofs_owned]
+            workspace._du_red.array[:] = 0.0
+
+            # Solve reduced system.
+            _memory_snapshot(iteration, "pre-ksp-solve")
+            ksp_solve.setOperators(workspace._A_red)
+            ksp_solve.solve(workspace._b_red, workspace._du_red)
+            ksp_reason = ksp_solve.getConvergedReason()
+            _memory_snapshot(iteration, "post-ksp-solve")
+
+            # Scatter reduced solution back to full vector.
+            du.x.array[:] = 0.0
+            du.x.array[active_dofs_owned] = workspace._du_red.array
+        else:
+            # --- Full-system path (original): pin inactive + solve full ---
+            pin_inactive_dofs(A, b, inactive_dofs)
+
+            # PC lagging for iterative mode: fresh PC on first iteration,
+            # reuse from iteration 1 onward to avoid redundant refactorization.
+            if is_iterative:
+                if iteration == 0:
+                    pc_solve.setReusePreconditioner(False)
+                    pc_lagged = False
+                elif iteration == 1 and not pc_lagged:
+                    pc_solve.setReusePreconditioner(True)
+                    pc_lagged = True
+
+            jac_time = _time.time() - jac_t0
+            _memory_snapshot(iteration, "post-jacobian")
+
+            if debug and iteration == 0:
+                _live_print(f"  │  Jacobian: asm={jac_time_asm:.2f}s total={jac_time:.2f}s")
+
+            # --- Solve linear system ---
+            du.x.array[:] = 0.0
+
+            _memory_snapshot(iteration, "pre-ksp-solve")
+            ksp_solve.solve(b, du.x.petsc_vec)
+            ksp_reason = ksp_solve.getConvergedReason()
+            _memory_snapshot(iteration, "post-ksp-solve")
 
         # Per-rank KSP diagnostics on first iteration of each step.
         if n_ranks > 1 and iteration == 0:
             _rank_report(
                 msh.comm,
                 "KSP",
-                f"iters={ksp.getIterationNumber()},"
-                f" reason={int(ksp.getConvergedReason())}",
+                f"iters={ksp_solve.getIterationNumber()},"
+                f" reason={int(ksp_solve.getConvergedReason())}",
                 debug,
             )
 
@@ -966,7 +1137,7 @@ def solve_newton(
             return iteration, True, "converged (stagnation)", _build_stats()
 
         # Track linear solver iteration count for iterative KSP types.
-        ksp_its = ksp.getIterationNumber()
+        ksp_its = ksp_solve.getIterationNumber()
         total_ksp_its += ksp_its
 
         # Record first-iteration KSP count for PC lagging safety valve.
@@ -974,7 +1145,7 @@ def solve_newton(
             first_ksp_its = max(ksp_its, 1)
         # Safety valve: if lagged PC degrades badly, refresh it.
         if is_iterative and pc_lagged and ksp_its > 3 * first_ksp_its:
-            pc.setReusePreconditioner(False)
+            pc_solve.setReusePreconditioner(False)
             pc_lagged = False
 
         # --- Backtracking line search ---

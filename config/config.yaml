@@ -19,8 +19,8 @@ geometry:
 # -----------------------------------------------------------------------------
 mesh:
   n_length: 100        # Divisions along length
-  n_span: 90           # Divisions along span
-  n_thickness: 2        # Divisions through thickness
+  n_span: 110           # Divisions along span
+  n_thickness: 1        # Divisions through thickness
   partitioner: strip   # strip | default (ParMETIS/SCOTCH)
 
 # -----------------------------------------------------------------------------
@@ -77,8 +77,9 @@ boundary_conditions:
 # -----------------------------------------------------------------------------
 solver:
   max_iterations: 1000   # Maximum Newton iterations per step
-  rtol: 1.0e-6          # Relative tolerance
+  rtol: 1.0e-5          # Relative tolerance
   atol: 1.0e-10         # Absolute tolerance
+  active_dof_reduction: true   # Solve reduced system of active DOFs only (iterative solver)
   linear_solver: iterative    # direct | iterative
   direct:
     mumps_icntl_14: 200   # MUMPS extra workspace percentage
@@ -88,20 +89,50 @@ solver:
     # GMRES + Additive Schwarz with overlapping ILU(1) sub-solvers.
     # ASM with overlap provides cross-rank coupling that block Jacobi lacks,
     # preventing KSP iteration explosion with multiple ranks.
-    pc_type: asm            # Additive Schwarz (was: bjacobi)
-    asm_overlap: 2          # Overlap depth between subdomains
-    sub_pc_type: ilu        # Sub-solver per subdomain
-    ilu_levels: 1           # ILU(1) fill for better preconditioning
-    rtol: 1.0e-4            # GMRES relative tolerance
-    atol: 1.0e-12           # GMRES absolute tolerance
-    max_it: 500             # GMRES max iterations
-    gmres_restart: 60       # GMRES restart (increased for ASM convergence)
+    #
+    # pc_type options:
+    #   asm      - Additive Schwarz: overlapping subdomains, best multi-rank coupling
+    #   bjacobi  - Block Jacobi: non-overlapping, one block per rank, cheaper but weaker
+    #   hypre    - BoomerAMG algebraic multigrid (robust for 3D, higher setup cost)
+    #   lu       - Full LU factorization as preconditioner (expensive, very robust)
+    #   gamg     - PETSc native algebraic multigrid
+    #   jacobi   - Diagonal (point) Jacobi, very cheap but weak
+    #   none     - No preconditioning (rarely useful)
+    pc_type: asm
+    #
+    # asm_overlap: number of cell layers shared between subdomains (asm only).
+    #   0 = no overlap (like bjacobi), higher = better convergence but more memory.
+    #   Typical range: 1-4.
+    asm_overlap: 2
+    #
+    # sub_pc_type options (sub-solver applied within each subdomain/block):
+    #   ilu   - Incomplete LU factorization (default, good balance)
+    #   lu    - Full LU on each subdomain (most robust, most expensive)
+    #   icc   - Incomplete Cholesky (only for SPD sub-blocks)
+    #   none  - No sub-preconditioning
+    sub_pc_type: ilu
+    #
+    # ilu_levels: fill level for ILU factorization.
+    #   0 = ILU(0), same sparsity as original (cheapest, weakest).
+    #   1 = ILU(1), one level of fill (better convergence, more memory).
+    #   2+ = more fill, diminishing returns. Typical range: 0-3.
+    ilu_levels: 1
+    #
+    # GMRES tolerances and limits:
+    rtol: 1.0e-4            # GMRES relative tolerance (||r||/||r0|| < rtol)
+    atol: 1.0e-12           # GMRES absolute tolerance (||r|| < atol)
+    max_it: 500             # GMRES max iterations before declaring divergence
+    #
+    # gmres_restart: Krylov subspace size before restart.
+    #   Higher = better convergence for stiff problems but more memory (stores N vectors).
+    #   Too low = stalls on ill-conditioned systems. Typical range: 30-200.
+    gmres_restart: 60
 
 # -----------------------------------------------------------------------------
 # Time Stepping
 # -----------------------------------------------------------------------------
 time_stepping:
-  n_steps: 300       # Number of time steps
+  n_steps: 600       # Number of time steps
   max_steps: 0       # Stop after this many steps (0 = run all). For benchmarking.
   start_offset: 0.1     # Offset from minimum birth time [s]
   end_multiplier: 1.05  # Multiplier for maximum birth time
