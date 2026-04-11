@@ -1,0 +1,108 @@
+# =============================================================================
+# Hollow Cylinder Physical Validation Configuration
+# =============================================================================
+
+geometry:
+  type: hollow_cylinder
+  heartline_radius: 250.0
+  thickness: 40.0
+  height: 300.0
+  layer_height: 10.0
+  imperfection_amplitude: 10.0
+
+mesh:
+  n_length: 30
+  n_span: 96
+  n_thickness: 4
+  partitioner: strip
+
+material:
+  tau_0: 500.0
+  A_thix: 1.35
+  mu_p: 150.0
+  gamma_c: 0.06
+  rho: 2070.0
+  g: 9810.0
+
+hardening:
+  t_set: 1200.0
+  E_inf: 1.0
+  nu_fresh: 0.30
+  nu_hard: 0.30
+  n_h: 1.0
+
+interface:
+  gamma_bonded_mult: 40.0
+  gamma_boundary_mult: 300.0
+  G_Ic: 8.0
+  G_IIc: 12.0
+  eta_BK: 1.5
+  nozzle_pressure: 70000.0
+  residual_stiffness_ratio: 1.0
+  K_min_mult: 40.0
+
+activation:
+  tcp_speed: 83.3333333333
+  sharpness: 1.0
+  alpha_min: 1.0e-10
+
+boundary_conditions:
+  base_dirichlet_value: 0.0
+
+solver:
+  max_iterations: 1000
+  rtol: 1.0e-5
+  atol: 1.0e-10
+  active_dof_reduction: true
+  linear_solver: direct
+  direct:
+    mumps_icntl_14: 200
+    out_of_core: false
+  iterative:
+    pc_type: asm
+    asm_overlap: 2
+    sub_pc_type: ilu
+    ilu_levels: 1
+    rtol: 1.0e-4
+    atol: 1.0e-12
+    max_it: 500
+    gmres_restart: 60
+
+time_stepping:
+  n_steps: 240
+  max_steps: 0
+  start_offset: 0.0
+  end_multiplier: 1.0
+
+checkpoint:
+  save_every: 5
+  resume_enabled: false
+  directory: "validation/cylinder_print/checkpoints"
+
+output:
+  directory: "validation/cylinder_print/output"
+  displacement_file: ""
+  cell_data_file: ""
+  log_file: ""
+
+mesh_quality:
+  enabled: true
+  aspect_ratio_threshold: 10.0
+  min_scaled_jacobian: 0.1
+  jacobian_near_zero_tol: 1.0e-10
+  volume_variation_threshold: 20.0
+  max_skewness: 0.5
+  max_warping: 0.1
+  fail_on_negative_jacobian: true
+
+debug:
+  collective_debug: false
+  collective_debug_max_iter: 3
+  collective_debug_barrier: false
+  output_io: false
+  step_setup: false
+  step_setup_max_steps: 3
+  newton_memory_tracking: false
+  newton_memory_every_iter: 1
+  newton_memory_collect_garbage: false
+  newton_memory_track_mumps: false

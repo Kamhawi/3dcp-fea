@@ -1,11 +1,12 @@
 # Author: Abdallah Kamhawi <Kamhawi@umich.edu>
 # Package Maintainer: Abdallah Kamhawi <Kamhawi@umich.edu>
 
-"""Mesh subpackage for architectural vault structures.
+"""Mesh subpackage for structural 3DCP geometries.
 
 The subpackage exposes core mesh primitives (faces, cells, layers, interfaces)
-as well as barrel vault-specific mesh generation utilities. Most public
-classes are re-exported here for convenient imports.
+as well as geometry-specific mesh generation utilities for barrel vaults and
+hollow cylinders. Most public classes are re-exported here for convenient
+imports.
 """
 
 from .mesh_core import (
@@ -27,6 +28,12 @@ from .barrel_vault import (
     BarrelVaultFaceType,
     BarrelVaultHexahedronCell,
     BarrelVaultVolumetricMesh,
+)
+from .hollow_cylinder import (
+    HollowCylinderFaceType,
+    HollowCylinderFace,
+    HollowCylinderHexahedronCell,
+    HollowCylinderVolumetricMesh,
 )
 
 from .dolfinx_mapping import (
@@ -60,6 +67,10 @@ __all__ = [
     "BarrelVaultFaceType",
     "BarrelVaultHexahedronCell",
     "BarrelVaultCellType",
+    "HollowCylinderVolumetricMesh",
+    "HollowCylinderFace",
+    "HollowCylinderFaceType",
+    "HollowCylinderHexahedronCell",
     "compute_cell_permutation",
     "reorder_cell_data",
     "tag_interfaces",
