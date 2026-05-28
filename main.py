@@ -16,7 +16,6 @@ import os
 import sys
 import time
 import shutil
-from pathlib import Path
 
 from mpi4py import MPI
 from dolfinx import fem
@@ -41,8 +40,6 @@ from mesh import (
 from physics.weak_form import build_evp_cohesive_weak_form
 from solver.barrel_vault_output import (
     build_cell_output_data,
-    generate_barrel_vault_figures,
-    get_barrel_vault_output_config,
 )
 from solver.time_stepper import build_cell_to_dofs_and_support, run_simulation
 
@@ -324,14 +321,6 @@ def main():
             simulation_start_time=simulation_start_time,
             cell_output_data=cell_output_data,
         )
-
-        if comm.rank == 0 and get_barrel_vault_output_config(cfg)["generate_figures"]:
-            try:
-                figure_paths = generate_barrel_vault_figures(Path(disp_path).parent, cfg)
-                for figure_path in figure_paths:
-                    print(f"  Figure saved to: {figure_path}", flush=True)
-            except Exception as exc:
-                print(f"  WARNING: barrel-vault figure generation failed: {exc}", flush=True)
 
         if comm.rank == 0:
             print("\nDone!", flush=True)

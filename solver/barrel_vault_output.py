@@ -4,7 +4,7 @@ This module provides:
 - cell/facet metadata builders for barrel-vault meshes,
 - per-step inter-layer opening/damage summaries,
 - CSV/JSON writers for run outputs,
-- figure generation for a completed run directory.
+- post-processing figure generation from saved run outputs.
 """
 
 from __future__ import annotations
@@ -64,7 +64,6 @@ def get_barrel_vault_output_config(cfg: dict) -> dict:
     """Return normalized barrel-vault output configuration."""
     defaults = {
         "enabled": True,
-        "generate_figures": True,
         "write_facet_history": False,
         "write_span_profiles": True,
         "sample_every_steps": 1,
@@ -76,7 +75,6 @@ def get_barrel_vault_output_config(cfg: dict) -> dict:
     merged = dict(defaults)
     merged.update(user_cfg)
     merged["enabled"] = bool(merged.get("enabled", True))
-    merged["generate_figures"] = bool(merged.get("generate_figures", True))
     merged["write_facet_history"] = bool(merged.get("write_facet_history", False))
     merged["write_span_profiles"] = bool(merged.get("write_span_profiles", True))
     merged["sample_every_steps"] = max(1, int(merged.get("sample_every_steps", 1)))
@@ -784,11 +782,59 @@ def _load_csv_rows(csv_path: Path) -> List[dict]:
     return rows
 
 
-def _pick_heatmap_steps(results: dict, rows: List[dict]) -> List[tuple]:
+def _is_truthy(value) -> bool:
+    """Interpret CSV-style values as booleans."""
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
+
+
+def _event_from_step_row(row: Optional[dict]) -> Optional[dict]:
+    """Build a lightweight event record from a step_metrics row."""
+    if row is None:
+        return None
+    return {
+        "step": int(row.get("step", 0)),
+        "time_s": float(row.get("time_s", 0.0)),
+        "active_layers": int(row.get("active_layers", row.get("step", 0))),
+    }
+
+
+def _find_first_flagged_event(rows: List[dict], flag_key: str) -> Optional[dict]:
+    """Return the first row flagged by a step_metrics event column."""
+    for row in rows:
+        if _is_truthy(row.get(flag_key, 0)):
+            return _event_from_step_row(row)
+    return None
+
+
+def _load_results_json(results_path: Optional[Path]) -> dict:
+    """Load results JSON when it exists; otherwise return an empty dict."""
+    if results_path is None or not Path(results_path).exists():
+        return {}
+    with open(results_path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _resolve_event_records(results: dict, rows: List[dict]) -> Dict[str, Optional[dict]]:
+    """Resolve event records from JSON when present, otherwise from CSV flags."""
+    events = dict(results.get("events", {}))
+    if events.get("first_damage") is None:
+        events["first_damage"] = _find_first_flagged_event(rows, "first_damage_seen")
+    if events.get("first_visible_gap") is None:
+        events["first_visible_gap"] = _find_first_flagged_event(rows, "first_gap_seen")
+    if events.get("first_junction_opening") is None:
+        events["first_junction_opening"] = _find_first_flagged_event(
+            rows, "first_junction_opening_seen"
+        )
+    return events
+
+
+def _pick_heatmap_steps(events: dict, rows: List[dict]) -> List[tuple]:
     final_step = int(rows[-1]["step"]) if rows else 0
     selections = []
-    first_damage = results.get("events", {}).get("first_damage")
-    first_gap = results.get("events", {}).get("first_visible_gap")
+    first_damage = events.get("first_damage")
+    first_gap = events.get("first_visible_gap")
     if first_damage is not None:
         selections.append(("First Damage", int(first_damage["step"])))
     if first_gap is not None:
@@ -816,19 +862,140 @@ def _build_heatmap_matrix(
     return matrix
 
 
-def generate_barrel_vault_figures(
-    run_dir: Path, cfg: Optional[dict] = None
+def _generate_heatmap_figure(
+    profile_rows: List[dict],
+    rows: List[dict],
+    events: dict,
+    output_dir: Path,
+    plt,
 ) -> List[Path]:
-    """Generate barrel-vault figures for a completed run directory."""
-    run_dir = Path(run_dir)
-    step_metrics_path = run_dir / "step_metrics.csv"
-    span_profiles_path = run_dir / "span_profiles.csv"
-    results_path = run_dir / "barrel_vault_results.json"
-    if not step_metrics_path.exists() or not span_profiles_path.exists() or not results_path.exists():
+    """Write the barrel-vault heatmap figure in horizontal B&W + Colorful Heatmap style."""
+    out_paths: List[Path] = []
+    selections = _pick_heatmap_steps(events, rows)
+    if not selections:
+        return out_paths
+
+    FONT_SIZE = 8
+    LABEL_SIZE = 10
+    
+    plt.rcParams.update({
+        "font.size": FONT_SIZE,
+        "axes.titlesize": FONT_SIZE,
+        "axes.labelsize": FONT_SIZE,
+        "xtick.labelsize": FONT_SIZE,
+        "ytick.labelsize": FONT_SIZE,
+    })
+
+    n_sel = len(selections)
+    n_panels = 2 * n_sel
+    
+    # Very tight, horizontal layout suitable for the standard width
+    fig = plt.figure(figsize=(8.5, 2.5), facecolor='white')
+    panel_width = 0.70 / n_panels
+    axes = []
+    
+    for i in range(n_panels):
+        x0 = 0.05 + i * (panel_width + 0.08)
+        # Setup main axis and thin colorbar axis
+        ax = fig.add_axes([x0, 0.20, panel_width * 0.85, 0.65])
+        cax = fig.add_axes([x0 + panel_width * 0.88, 0.20, panel_width * 0.08, 0.65])
+        axes.append((ax, cax))
+
+    panel_labels = ["a", "b", "c", "d", "e", "f"]
+
+    for col, (title, step) in enumerate(selections):
+        open_matrix = _build_heatmap_matrix(profile_rows, step, "max_opening_mm")
+        dmg_matrix = _build_heatmap_matrix(profile_rows, step, "max_damage")
+
+        # Opening panel (Blues mapping for contrast against B&W)
+        ax_open, cax_open = axes[2 * col]
+        im0 = ax_open.imshow(open_matrix, origin="lower", aspect="auto", cmap="viridis")
+        ax_open.text(0.0, 1.05, panel_labels[2 * col], ha="left", va="bottom", transform=ax_open.transAxes, fontsize=LABEL_SIZE, fontweight="bold")
+        # ax_open.text(0.05, 0.90, f"{title}\nOpening", ha="left", va="top", transform=ax_open.transAxes, fontsize=FONT_SIZE, color="black", bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=2))
+        
+        ax_open.set_xlabel("Span")
+        if col == 0:
+            ax_open.set_ylabel("Length")
+        fig.colorbar(im0, cax=cax_open)
+
+        # Damage panel (Reds mapping for contrast against B&W, fits the Red accent)
+        ax_dmg, cax_dmg = axes[2 * col + 1]
+        im1 = ax_dmg.imshow(dmg_matrix, origin="lower", aspect="auto", cmap="magma")
+        ax_dmg.text(0.0, 1.05, panel_labels[2 * col + 1], ha="left", va="bottom", transform=ax_dmg.transAxes, fontsize=LABEL_SIZE, fontweight="bold")
+        # ax_dmg.text(0.05, 0.90, f"{title}\nDamage", ha="left", va="top", transform=ax_dmg.transAxes, fontsize=FONT_SIZE, color="black", bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=2))
+
+        ax_dmg.set_xlabel("Span")
+        fig.colorbar(im1, cax=cax_dmg)
+
+    heatmap_pdf = output_dir / "barrel_vault_heatmaps_bw_red.pdf"
+    heatmap_png = output_dir / "barrel_vault_heatmaps_bw_red.png"
+    fig.savefig(heatmap_pdf, dpi=300, bbox_inches="tight")
+    fig.savefig(heatmap_png, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    out_paths.extend([heatmap_pdf, heatmap_png])
+    return out_paths
+
+
+def _resolve_figure_paths(
+    run_dir: Optional[Path],
+    step_metrics_path: Optional[Path],
+    span_profiles_path: Optional[Path],
+    output_dir: Optional[Path],
+    results_path: Optional[Path],
+) -> tuple[Path, Path, Path, Optional[Path]]:
+    """Resolve figure input/output paths from a run dir or explicit CSV paths."""
+    if run_dir is not None:
+        run_dir = Path(run_dir)
+        if step_metrics_path is None:
+            step_metrics_path = run_dir / "step_metrics.csv"
+        if span_profiles_path is None:
+            span_profiles_path = run_dir / "span_profiles.csv"
+        if output_dir is None:
+            output_dir = run_dir
+        if results_path is None:
+            candidate = run_dir / "barrel_vault_results.json"
+            results_path = candidate if candidate.exists() else None
+
+    if step_metrics_path is None or span_profiles_path is None:
+        raise ValueError("step_metrics.csv and span_profiles.csv are required")
+
+    step_metrics_path = Path(step_metrics_path)
+    span_profiles_path = Path(span_profiles_path)
+    output_dir = Path(output_dir) if output_dir is not None else step_metrics_path.parent
+    results_path = None if results_path is None else Path(results_path)
+    return step_metrics_path, span_profiles_path, output_dir, results_path
+
+
+def generate_barrel_vault_figures(
+    run_dir: Optional[Path] = None,
+    cfg: Optional[dict] = None,
+    *,
+    step_metrics_path: Optional[Path] = None,
+    span_profiles_path: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
+    results_path: Optional[Path] = None,
+) -> List[Path]:
+    """Generate barrel-vault figures from saved CSV outputs in horizontal B&W + Red Accent style."""
+    del cfg  # Kept for backward compatibility with older callers.
+
+    (
+        step_metrics_path,
+        span_profiles_path,
+        output_dir,
+        results_path,
+    ) = _resolve_figure_paths(
+        run_dir,
+        step_metrics_path,
+        span_profiles_path,
+        output_dir,
+        results_path,
+    )
+
+    if not step_metrics_path.exists() or not span_profiles_path.exists():
         return []
 
-    os.environ.setdefault("MPLCONFIGDIR", str(run_dir / ".mplconfig"))
-    os.environ.setdefault("XDG_CACHE_HOME", str(run_dir / ".cache"))
+    os.environ["MPLCONFIGDIR"] = str(output_dir / ".mplconfig")
+    os.environ["XDG_CACHE_HOME"] = str(output_dir / ".cache")
     Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
     Path(os.environ["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
 
@@ -842,8 +1009,7 @@ def generate_barrel_vault_figures(
 
     rows = _load_csv_rows(step_metrics_path)
     profile_rows = _load_csv_rows(span_profiles_path)
-    with open(results_path, "r", encoding="utf-8") as handle:
-        results = json.load(handle)
+    results = _load_results_json(results_path)
 
     if not rows:
         return []
@@ -882,114 +1048,188 @@ def generate_barrel_vault_figures(
         [float(row.get("junction_opening_ratio", 0.0)) for row in rows], dtype=float
     )
 
-    event_damage = results.get("events", {}).get("first_damage")
-    event_gap = results.get("events", {}).get("first_visible_gap")
-    event_junction = results.get("events", {}).get("first_junction_opening")
+    events = _resolve_event_records(results, rows)
+    event_damage = events.get("first_damage")
+    event_gap = events.get("first_visible_gap")
+    event_junction = events.get("first_junction_opening")
 
     out_paths: List[Path] = []
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
-    ax = axes[0, 0]
-    ax.plot(x_vals, max_disp, lw=2.0, color="#29465B", label="Max displacement")
-    ax.plot(x_vals, cantilever_sag, lw=2.0, color="#8F3B1B", label="Cantilever sag")
-    ax.set_xlabel("Active layers")
-    ax.set_ylabel("Displacement [mm]")
-    ax.legend(frameon=True)
-    ax.grid(alpha=0.3)
+    # ---------------------------------------------------------------------------
+    # Horizontal tight 4-panel layout (B&W + Red Accent)
+    # ---------------------------------------------------------------------------
+    FONT_SIZE = 8
+    LABEL_SIZE = 10
 
-    ax = axes[0, 1]
-    ax.plot(x_vals, max_open, lw=2.0, color="#29465B", label="Max opening")
-    ax.plot(x_vals, crown_open, lw=1.8, color="#A23B2A", label="Crown opening")
-    ax.plot(x_vals, junction_open, lw=1.8, color="#1B6A4A", label="Junction opening")
-    ax.plot(x_vals, front_open, lw=1.8, color="#7B5EA7", label="Front opening")
-    ax.set_xlabel("Active layers")
-    ax.set_ylabel("Opening [mm]")
-    ax.legend(frameon=True)
-    ax.grid(alpha=0.3)
+    plt.rcParams.update({
+        "font.size": FONT_SIZE,
+        "axes.titlesize": FONT_SIZE,
+        "axes.labelsize": FONT_SIZE,
+        "xtick.labelsize": FONT_SIZE,
+        "ytick.labelsize": FONT_SIZE,
+        "legend.fontsize": FONT_SIZE,
+        "figure.titlesize": FONT_SIZE,
+        "savefig.bbox": None,
+        "savefig.pad_inches": 0.0,
+    })
 
-    ax = axes[1, 0]
-    ax.plot(x_vals, max_damage, lw=2.0, color="#29465B", label="Max damage")
-    ax.plot(x_vals, crown_damage, lw=1.8, color="#A23B2A", label="Crown damage")
-    ax.plot(x_vals, junction_damage, lw=1.8, color="#1B6A4A", label="Junction damage")
-    ax.plot(x_vals, front_damage, lw=1.8, color="#7B5EA7", label="Front damage")
-    ax.set_xlabel("Active layers")
-    ax.set_ylabel("Damage [-]")
-    ax.legend(frameon=True)
-    ax.grid(alpha=0.3)
+    fig = plt.figure(figsize=(8.5, 2.5), facecolor='white')
 
-    ax = axes[1, 1]
-    ax.plot(x_vals, front_ratio, lw=2.0, color="#7B5EA7", label="Front / Crown opening")
-    ax.plot(x_vals, junction_ratio, lw=2.0, color="#1B6A4A", label="Junction / Max opening")
-    ax.set_xlabel("Active layers")
-    ax.set_ylabel("Ratio [-]")
-    ax.legend(frameon=True)
-    ax.grid(alpha=0.3)
+    ax1 = fig.add_axes([0.05, 0.20, 0.18, 0.70])
+    ax2 = fig.add_axes([0.30, 0.20, 0.18, 0.70])
+    ax3 = fig.add_axes([0.55, 0.20, 0.18, 0.70])
+    ax4 = fig.add_axes([0.80, 0.20, 0.18, 0.70])
+
+    fig.text(0.01, 0.95, "a", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="top")
+    fig.text(0.26, 0.95, "b", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="top")
+    fig.text(0.51, 0.95, "c", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="top")
+    fig.text(0.76, 0.95, "d", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="top")
+
+    # Panel a: Displacement
+    ax1.plot(x_vals, max_disp, ls='-', lw=2.0, color="#000000", label="Max displacement")
+    ax1.plot(x_vals, cantilever_sag, ls='--', lw=2.0, color="#555555", label="Cantilever sag")
+    ax1.set_xlabel("Active layers")
+    ax1.set_ylabel("Displacement [mm]")
+    ax1.legend(frameon=True, borderpad=0.3)
+    ax1.grid(alpha=0.4)
+
+    # Panel b: Opening
+    ax2.plot(x_vals, max_open, ls='-', lw=2.0, color="#000000", label="Max opening")
+    ax2.plot(x_vals, crown_open, ls='--', lw=1.8, color="#555555", label="Crown opening")
+    ax2.plot(x_vals, junction_open, ls=':', lw=1.8, color="#888888", label="Junction opening")
+    ax2.plot(x_vals, front_open, ls='-.', lw=1.8, color="#CC2222", label="Front opening")
+    ax2.set_xlabel("Active layers")
+    ax2.set_ylabel("Opening [mm]")
+    ax2.legend(frameon=True, borderpad=0.3)
+    ax2.grid(alpha=0.4)
+
+    # Panel c: Damage
+    ax3.plot(x_vals, max_damage, ls='-', lw=2.0, color="#000000", label="Max damage")
+    ax3.plot(x_vals, crown_damage, ls='--', lw=1.8, color="#555555", label="Crown damage")
+    ax3.plot(x_vals, junction_damage, ls=':', lw=1.8, color="#888888", label="Junction damage")
+    ax3.plot(x_vals, front_damage, ls='-.', lw=1.8, color="#CC2222", label="Front damage")
+    ax3.set_xlabel("Active layers")
+    ax3.set_ylabel("Damage [-]")
+    ax3.legend(frameon=True, borderpad=0.3)
+    ax3.grid(alpha=0.4)
+
+    # Panel d: Ratios
+    ax4.plot(x_vals, front_ratio, ls='-.', lw=2.0, color="#CC2222", label="Front / Crown")
+    ax4.plot(x_vals, junction_ratio, ls=':', lw=2.0, color="#888888", label="Junction / Max")
+    ax4.set_xlabel("Active layers")
+    ax4.set_ylabel("Ratio [-]")
+    ax4.legend(frameon=True, borderpad=0.3)
+    ax4.grid(alpha=0.4)
 
     for event in (event_junction, event_damage, event_gap):
         if event is None:
             continue
         x_event = float(event.get("active_layers", event.get("step", 0)))
-        for ax in axes.ravel():
-            ax.axvline(x_event, color="#444444", lw=0.8, ls="--", alpha=0.35)
+        for ax in (ax1, ax2, ax3, ax4):
+            ax.axvline(x_event, color="#777777", lw=1.0, ls=":", alpha=0.8)
 
-    fig.suptitle("Barrel-Vault Output Summary", fontsize=14)
-    progress_pdf = run_dir / "barrel_vault_progress.pdf"
-    progress_png = run_dir / "barrel_vault_progress.png"
+    progress_pdf = output_dir / "barrel_vault_progress_bw_red.pdf"
+    progress_png = output_dir / "barrel_vault_progress_bw_red.png"
     fig.savefig(progress_pdf, dpi=300, bbox_inches="tight")
     fig.savefig(progress_png, dpi=300, bbox_inches="tight")
     plt.close(fig)
     out_paths.extend([progress_pdf, progress_png])
 
-    selections = _pick_heatmap_steps(results, rows)
-    if selections:
-        fig, axes = plt.subplots(
-            2,
-            len(selections),
-            figsize=(6.0 * len(selections), 8.0),
-            constrained_layout=True,
-        )
-        if len(selections) == 1:
-            axes = np.asarray(axes).reshape(2, 1)
-        for col, (title, step) in enumerate(selections):
-            open_matrix = _build_heatmap_matrix(profile_rows, step, "max_opening_mm")
-            dmg_matrix = _build_heatmap_matrix(profile_rows, step, "max_damage")
-
-            im0 = axes[0, col].imshow(
-                open_matrix, origin="lower", aspect="auto", cmap="magma"
-            )
-            axes[0, col].set_title(f"{title}\nOpening")
-            axes[0, col].set_xlabel("Span index")
-            axes[0, col].set_ylabel("Lower layer")
-            fig.colorbar(im0, ax=axes[0, col], fraction=0.046, pad=0.04)
-
-            im1 = axes[1, col].imshow(
-                dmg_matrix, origin="lower", aspect="auto", cmap="viridis"
-            )
-            axes[1, col].set_title(f"{title}\nDamage")
-            axes[1, col].set_xlabel("Span index")
-            axes[1, col].set_ylabel("Lower layer")
-            fig.colorbar(im1, ax=axes[1, col], fraction=0.046, pad=0.04)
-
-        fig.suptitle("Barrel-Vault Opening/Damage Heatmaps", fontsize=14)
-        heatmap_pdf = run_dir / "barrel_vault_heatmaps.pdf"
-        heatmap_png = run_dir / "barrel_vault_heatmaps.png"
-        fig.savefig(heatmap_pdf, dpi=300, bbox_inches="tight")
-        fig.savefig(heatmap_png, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-        out_paths.extend([heatmap_pdf, heatmap_png])
+    out_paths.extend(
+        _generate_heatmap_figure(profile_rows, rows, events, output_dir, plt)
+    )
 
     return out_paths
 
 
+def generate_barrel_vault_heatmaps(
+    run_dir: Optional[Path] = None,
+    *,
+    step_metrics_path: Optional[Path] = None,
+    span_profiles_path: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
+    results_path: Optional[Path] = None,
+) -> List[Path]:
+    """Generate only the barrel-vault heatmap figure from saved CSV outputs."""
+    (
+        step_metrics_path,
+        span_profiles_path,
+        output_dir,
+        results_path,
+    ) = _resolve_figure_paths(
+        run_dir,
+        step_metrics_path,
+        span_profiles_path,
+        output_dir,
+        results_path,
+    )
+
+    if not step_metrics_path.exists() or not span_profiles_path.exists():
+        return []
+
+    os.environ["MPLCONFIGDIR"] = str(output_dir / ".mplconfig")
+    os.environ["XDG_CACHE_HOME"] = str(output_dir / ".cache")
+    Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return []
+
+    rows = _load_csv_rows(step_metrics_path)
+    profile_rows = _load_csv_rows(span_profiles_path)
+    if not rows or not profile_rows:
+        return []
+
+    results = _load_results_json(results_path)
+    events = _resolve_event_records(results, rows)
+    return _generate_heatmap_figure(profile_rows, rows, events, output_dir, plt)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    """CLI entrypoint for figure regeneration on an existing run directory."""
+    """CLI entrypoint for figure regeneration from saved outputs."""
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_dir", type=Path, help="Completed run directory")
+    parser.add_argument(
+        "run_dir",
+        nargs="?",
+        type=Path,
+        help="Completed run directory containing step_metrics.csv and span_profiles.csv",
+    )
+    parser.add_argument(
+        "--step-metrics",
+        type=Path,
+        help="Path to step_metrics.csv",
+    )
+    parser.add_argument(
+        "--span-profiles",
+        type=Path,
+        help="Path to span_profiles.csv",
+    )
+    parser.add_argument(
+        "--results",
+        type=Path,
+        help="Optional path to barrel_vault_results.json",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory to write figure files into",
+    )
     args = parser.parse_args(argv)
 
-    out_paths = generate_barrel_vault_figures(args.run_dir)
+    out_paths = generate_barrel_vault_figures(
+        run_dir=args.run_dir,
+        step_metrics_path=args.step_metrics,
+        span_profiles_path=args.span_profiles,
+        results_path=args.results,
+        output_dir=args.output_dir,
+    )
     if out_paths:
         for path in out_paths:
             print(path)

@@ -1,7 +1,7 @@
 # Author: Abdallah Kamhawi <Kamhawi@umich.edu>
 # Package Maintainer: Abdallah Kamhawi <Kamhawi@umich.edu>
 
-"""Post-processing and figure generation for the cylinder print validation.
+"""Post-processing and figure generation for the cylinder print validation (B&W + Red Accent).
 
 Parses step_metrics.csv from the most recent run and generates comparison
 plots against the experimental results.
@@ -22,15 +22,21 @@ try:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import seaborn as sns
-    sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
     _HAS_PLOT = True
 except ImportError:
     _HAS_PLOT = False
 
-COLOR_SIM = '#4A6274'
-COLOR_SIM_COLLAPSE = '#003366'
-COLOR_EXP = '#a52a2a'
+# ---------------------------------------------------------------------------
+# Grayscale / B&W Color scheme with Red Accent & Font Standards
+# ---------------------------------------------------------------------------
+COLOR_MAIN = '#000000'         # Pure Black for simulated data
+COLOR_SIM_COLLAPSE = '#000000' # Pure Black (dotted) for predicted collapse
+COLOR_EXP_MEAN = '#CC2222'     # Sharp Red for experimental mean
+COLOR_EXP_BAND = '#E0E0E0'     # Light gray for experimental range band
+TEXT_COLOR = '#000000'         # Pure Black
+
+FONT_SIZE = 8
+LABEL_SIZE = 10
 
 # Wolfs, Bos & Salet (2018) Cement Concr. Res. 106, 103-116
 # Individual specimen failures: 30, 25, 31, 27, 31
@@ -39,7 +45,7 @@ EXPERIMENTAL_COLLAPSE_MEAN = float(np.mean(EXPERIMENTAL_SPECIMENS))   # 28.8
 EXPERIMENTAL_COLLAPSE_STD = float(np.std(EXPERIMENTAL_SPECIMENS))     # 2.7
 EXPERIMENTAL_COLLAPSE_MIN = int(np.min(EXPERIMENTAL_SPECIMENS))       # 25
 EXPERIMENTAL_COLLAPSE_MAX = int(np.max(EXPERIMENTAL_SPECIMENS))       # 31
-COLOR_EXP_BAND = '#a52a2a'
+
 T_INTERVAL_S = 2.0 * math.pi * 250.0 / (5000.0 / 60.0)  # ≈ 18.85 s
 
 
@@ -162,7 +168,7 @@ def main():
           f"std={EXPERIMENTAL_COLLAPSE_STD:.1f}, range={EXPERIMENTAL_COLLAPSE_MIN}-{EXPERIMENTAL_COLLAPSE_MAX} layers")
 
     if not _HAS_PLOT:
-        print("\nMatplotlib/seaborn not available; skipping figure generation.")
+        print("\nMatplotlib not available; skipping figure generation.")
         return
 
     # Smooth the data by averaging per-layer (multiple steps per layer)
@@ -177,66 +183,72 @@ def main():
         np.max(max_plastic_strain[active_layers == l]) for l in unique_layers
     ])
 
-    # Common legend entries for all panels
-    exp_label = f"Experiment mean ({EXPERIMENTAL_COLLAPSE_MEAN:.0f} layers)"
-    exp_band_label = f"Experiment range ({EXPERIMENTAL_COLLAPSE_MIN}\u2013{EXPERIMENTAL_COLLAPSE_MAX})"
-    sim_collapse_label = (
-        f"Predicted collapse ({collapse_layer} layers)"
-        if collapse_layer is not None else None
-    )
+    # Plot settings
+    plt.rcParams.update({
+        "font.size": FONT_SIZE,
+        "axes.titlesize": FONT_SIZE,
+        "axes.labelsize": FONT_SIZE,
+        "xtick.labelsize": FONT_SIZE,
+        "ytick.labelsize": FONT_SIZE,
+        "legend.fontsize": FONT_SIZE,
+        "figure.titlesize": FONT_SIZE,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+    })
+
+    # ── Figure: side-by-side tightened layout ──────────────────────────
+    fig = plt.figure(figsize=(8.5, 3.2), facecolor='white')
+
+    ax1 = fig.add_axes([0.07, 0.15, 0.25, 0.78])
+    ax2 = fig.add_axes([0.40, 0.15, 0.25, 0.78])
+    ax3 = fig.add_axes([0.73, 0.15, 0.25, 0.78])
+
+    fig.text(0.01, 0.96, "a", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="center", color=TEXT_COLOR)
+    fig.text(0.35, 0.96, "b", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="center", color=TEXT_COLOR)
+    fig.text(0.68, 0.96, "c", fontsize=LABEL_SIZE, fontweight="bold", ha="left", va="center", color=TEXT_COLOR)
+
+    # Common legend entries
+    exp_label = f"Exp. mean ({EXPERIMENTAL_COLLAPSE_MEAN:.1f})"
+    exp_band_label = f"Exp. range ({EXPERIMENTAL_COLLAPSE_MIN}\u2013{EXPERIMENTAL_COLLAPSE_MAX})"
+    sim_collapse_label = f"Predicted collapse ({collapse_layer})" if collapse_layer is not None else None
 
     def _add_reference_lines(ax):
         ax.axvspan(EXPERIMENTAL_COLLAPSE_MIN, EXPERIMENTAL_COLLAPSE_MAX,
-                   color=COLOR_EXP_BAND, alpha=0.12, label=exp_band_label, zorder=1)
-        ax.axvline(EXPERIMENTAL_COLLAPSE_MEAN, color=COLOR_EXP, linestyle="--",
-                   lw=1.8, label=exp_label, zorder=3)
+                   color=COLOR_EXP_BAND, alpha=0.6, zorder=1, label=exp_band_label)
+        ax.axvline(EXPERIMENTAL_COLLAPSE_MEAN, color=COLOR_EXP_MEAN, linestyle="--",
+                   lw=1.5, zorder=3, label=exp_label)
         if collapse_layer is not None:
-            ax.axvline(collapse_layer, color=COLOR_SIM_COLLAPSE, linestyle="--",
-                       lw=1.8, label=sim_collapse_label, zorder=3)
-
-    # ── Figure: side-by-side ──────────────────────────────────────────
-    fig, axes = plt.subplots(1, 3, figsize=(18, 4.5))
+            ax.axvline(collapse_layer, color=COLOR_SIM_COLLAPSE, linestyle=":",
+                       lw=1.5, zorder=3, label=sim_collapse_label)
 
     # ── a  Max displacement vs active layers ──────────────────────────
-    ax = axes[0]
-    ax.plot(unique_layers, disp_per_layer, '-', color=COLOR_SIM, lw=2.5,
-            ms=0, alpha=0.88, label="Present model", zorder=4)
-    _add_reference_lines(ax)
-    ax.set_xlabel("Active layers", fontsize=13)
-    ax.set_ylabel("Max displacement [mm]", fontsize=13)
-    ax.legend(loc="upper left", frameon=True, fontsize=10)
-    ax.set_xlim(0, unique_layers[-1])
-    ax.set_title("a", fontweight="bold", fontsize=13, loc="left", pad=8)
-    ax.grid(True, which="major", alpha=0.3)
+    ax1.plot(unique_layers, disp_per_layer, '-', color=COLOR_MAIN, lw=2.0, zorder=4, label="Present model")
+    _add_reference_lines(ax1)
+    ax1.set_xlabel("Active layers", fontsize=FONT_SIZE)
+    ax1.set_ylabel("Max displacement [mm]", fontsize=FONT_SIZE, labelpad=2)
+    ax1.set_xlim(0, unique_layers[-1])
+    ax1.legend(loc="upper left", frameon=True, fontsize=7, borderpad=0.3)
+    ax1.grid(True, which="major", alpha=0.4)
 
     # ── b  Yielding fraction ──────────────────────────────────────────
-    ax = axes[1]
-    ax.plot(unique_layers, yield_per_layer, '-', color=COLOR_SIM, lw=2.5,
-            ms=0, alpha=0.88, label=r"Yielded ($f > 0$)", zorder=4)
-    _add_reference_lines(ax)
-    ax.set_xlabel("Active layers", fontsize=13)
-    ax.set_ylabel("Yielding cells [%]", fontsize=13)
-    ax.set_xlim(0, unique_layers[-1])
-    ax.legend(loc="upper left", frameon=True, fontsize=10)
-    ax.set_title("b", fontweight="bold", fontsize=13, loc="left", pad=8)
-    ax.grid(True, which="major", alpha=0.3)
+    ax2.plot(unique_layers, yield_per_layer, '-', color=COLOR_MAIN, lw=2.0, zorder=4, label=r"Yielded ($f > 0$)")
+    _add_reference_lines(ax2)
+    ax2.set_xlabel("Active layers", fontsize=FONT_SIZE)
+    ax2.set_ylabel("Yielding cells [%]", fontsize=FONT_SIZE, labelpad=2)
+    ax2.set_xlim(0, unique_layers[-1])
+    ax2.legend(loc="upper left", frameon=True, fontsize=7, borderpad=0.3)
+    ax2.grid(True, which="major", alpha=0.4)
 
     # ── c  Max plastic strain ─────────────────────────────────────────
-    ax = axes[2]
-    ax.plot(unique_layers, plastic_per_layer * 100.0, '-', color=COLOR_SIM,
-            lw=2.5, ms=0, alpha=0.88, label="Max plastic strain", zorder=4)
-    _add_reference_lines(ax)
-    ax.set_xlabel("Active layers", fontsize=13)
-    ax.set_ylabel("Max plastic strain [%]", fontsize=13)
-    ax.set_xlim(0, unique_layers[-1])
-    ax.legend(loc="upper left", frameon=True, fontsize=10)
-    ax.set_title("c", fontweight="bold", fontsize=13, loc="left", pad=8)
-    ax.grid(True, which="major", alpha=0.3)
+    ax3.plot(unique_layers, plastic_per_layer * 100.0, '-', color=COLOR_MAIN, lw=2.0, zorder=4, label="Max plastic strain")
+    _add_reference_lines(ax3)
+    ax3.set_xlabel("Active layers", fontsize=FONT_SIZE)
+    ax3.set_ylabel("Max plastic strain [%]", fontsize=FONT_SIZE, labelpad=2)
+    ax3.set_xlim(0, unique_layers[-1])
+    ax3.legend(loc="upper left", frameon=True, fontsize=7, borderpad=0.3)
+    ax3.grid(True, which="major", alpha=0.4)
 
-    fig.subplots_adjust(left=0.05, right=0.97, bottom=0.14, top=0.90,
-                        wspace=0.30)
-
-    fig_path = csv_path.parent / "cylinder_print_validation.pdf"
+    fig_path = csv_path.parent / "cylinder_print_validation_bw_red.pdf"
     fig.savefig(fig_path, dpi=300, bbox_inches="tight")
     fig.savefig(fig_path.with_suffix(".png"), dpi=300, bbox_inches="tight")
     print(f"\nFigures saved: {fig_path} and {fig_path.with_suffix('.png')}")
