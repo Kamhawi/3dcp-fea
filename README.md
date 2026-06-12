@@ -1,4 +1,4 @@
-# Laminated 3DCP FEA
+# 3DCP-FEA
 
 A distributed-memory, MPI-parallel finite element framework for simulating layer-by-layer **3D concrete printing (3DCP)**, built on [FEniCSx/DOLFINx](https://fenicsproject.org/). The framework models the printing process as a sequence of element activations and captures the competing failure modes of fresh-state printed concrete: plastic yielding of the young material and delamination between deposited layers.
 
@@ -41,7 +41,7 @@ mpirun -np 4 python main.py     # MPI-parallel
 `main.py` takes **no CLI arguments** — all run-time choices live in [config/config.yaml](config/config.yaml); edit the YAML before running. The main sections:
 
 | Section | Controls |
-|---|---|
+| --- | --- |
 | `geometry` / `mesh` | barrel-vault dimensions, hex divisions, partitioner |
 | `boundary_conditions` | Dirichlet support during printing |
 | `material` / `hardening` | Bingham/Perzyna rheology, age-dependent stiffening |
@@ -82,7 +82,7 @@ CG additionally requires `mesh.partitioner: strip` for ghost-visibility safety.
 ## Repository layout
 
 | Path | Purpose |
-|---|---|
+| --- | --- |
 | [main.py](main.py) | Orchestrator (11-step pipeline: config → mesh → activation → state → tagging → spaces → weak form → time loop). No numerics. |
 | [config/](config/) | YAML loading, run tags, output paths, config snapshots |
 | [mesh/](mesh/) | Geometry-agnostic primitives, parametric barrel-vault and non-planar cylinder hex meshes, DOLFINx partitioning/mapping, mesh quality |
