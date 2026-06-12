@@ -35,6 +35,7 @@ from .hollow_cylinder import (
     HollowCylinderHexahedronCell,
     HollowCylinderVolumetricMesh,
 )
+from .nonplanar_cylinder import NonPlanarCylinderMesh
 
 from .dolfinx_mapping import (
     compute_cell_permutation,
@@ -71,6 +72,7 @@ __all__ = [
     "HollowCylinderFace",
     "HollowCylinderFaceType",
     "HollowCylinderHexahedronCell",
+    "NonPlanarCylinderMesh",
     "compute_cell_permutation",
     "reorder_cell_data",
     "tag_interfaces",

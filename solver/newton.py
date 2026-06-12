@@ -21,6 +21,8 @@ from dolfinx.fem.petsc import assemble_matrix, assemble_vector, create_vector
 from mpi4py import MPI
 from petsc4py import PETSc
 
+from solver.kinematics import inactive_minus_active_dofs
+
 try:
     import psutil
 except ImportError:  # pragma: no cover - optional dependency
@@ -333,6 +335,11 @@ class NewtonLinearWorkspace:
 def get_inactive_dofs(t_val, birth_times, cell_to_dofs):
     """Return sorted DOF ids belonging to cells not active at ``t_val``.
 
+    Pins ``unique(dofs of inactive cells) \\ unique(dofs of active cells)``:
+    DOFs shared with an already-active cell (the CG activation front) are kept
+    free. For DG this exclusion is a no-op since cell DOFs are private, so the
+    bonded/cohesive simulations are unaffected.
+
     Args:
         t_val: Current physical time.
         birth_times: Cell birth-time array in DOLFINx ordering.
@@ -344,10 +351,7 @@ def get_inactive_dofs(t_val, birth_times, cell_to_dofs):
     Raises:
         None.
     """
-    inactive_cells = np.where(birth_times > t_val)[0]
-    if inactive_cells.size == 0:
-        return np.array([], dtype=np.int32)
-    inactive_dofs = np.unique(cell_to_dofs[inactive_cells].reshape(-1))
+    inactive_dofs = inactive_minus_active_dofs(t_val, birth_times, cell_to_dofs)
     return inactive_dofs.astype(np.int32, copy=False)
 
 

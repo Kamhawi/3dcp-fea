@@ -85,6 +85,37 @@ def sigma(u, lam, mu):
     return sigma_from_strain(epsilon(u), lam, mu)
 
 
+def inactive_minus_active_dofs(t_val, birth_times, cell_to_dofs):
+    """Return DOFs of inactive cells that no active cell also references.
+
+    The set is ``unique(dofs of inactive cells) \\ unique(dofs of active
+    cells)``. For a DG space every cell owns private DOFs, so inactive- and
+    active-cell DOFs are disjoint and the subtraction is an exact no-op. For a
+    CG space the activation-front nodes are shared between a just-born active
+    cell and its not-yet-born neighbour; those shared DOFs must stay free
+    (governed by the active cell), so they are removed from the inactive set.
+
+    Args:
+        t_val: Current physical time.
+        birth_times: Cell birth-time array in DOLFINx ordering.
+        cell_to_dofs: Cell-to-vector-DOF map with shape
+            ``(num_cells, dofs_per_cell)``.
+
+    Returns:
+        np.ndarray: Sorted DOF ids (``int64``) to pin/zero for inactive cells.
+    """
+    inactive_cells = np.where(birth_times > t_val)[0]
+    if inactive_cells.size == 0:
+        return np.array([], dtype=np.int64)
+    inactive_dofs = np.unique(cell_to_dofs[inactive_cells].reshape(-1))
+
+    active_cells = np.where(birth_times <= t_val)[0]
+    if active_cells.size == 0:
+        return inactive_dofs.astype(np.int64, copy=False)
+    active_dofs = np.unique(cell_to_dofs[active_cells].reshape(-1))
+    return np.setdiff1d(inactive_dofs, active_dofs, assume_unique=True)
+
+
 def zero_inactive_cells(u, t_val, birth_times, cell_to_dofs):
     """Enforce zero displacement on cells that are not yet active.
 
@@ -103,13 +134,13 @@ def zero_inactive_cells(u, t_val, birth_times, cell_to_dofs):
 
     Physics:
         Material deposited in the future (``birth_time > t``) must not carry
-        displacement before activation.
+        displacement before activation. DOFs shared with an already-active cell
+        (CG activation front) are excluded so the live material stays free; for
+        DG this exclusion is a no-op since cell DOFs are private.
     """
-    inactive_cells = np.where(birth_times > t_val)[0]
-    if inactive_cells.size > 0:
-        # Flatten selected cell DOFs, remove duplicates, then zero the unique
-        # vector DOF entries owned on this rank.
-        inactive_dofs = np.unique(cell_to_dofs[inactive_cells].reshape(-1))
+    inactive_dofs = inactive_minus_active_dofs(t_val, birth_times, cell_to_dofs)
+    if inactive_dofs.size > 0:
+        # Zero only the unique vector DOF entries owned on this rank.
         u.x.array[inactive_dofs] = 0.0
     # MPI ghost synchronization: ensure neighboring ranks see the updated
     # inactive-cell displacement values before subsequent assembly/evaluation.
