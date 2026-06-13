@@ -30,8 +30,6 @@ conda install -n fea -c conda-forge numba psutil
 
 Run everything from the repository root so package imports resolve.
 
-### Barrel vault (primary geometry)
-
 ```bash
 conda activate fea
 python main.py                  # serial
@@ -50,17 +48,6 @@ mpirun -np 4 python main.py     # MPI-parallel
 | `solver` | `direct` (MUMPS) or `iterative` (GMRES + ASM/ILU), active-DOF reduction |
 | `time_stepping` / `checkpoint` / `output` | step count, resume, output paths |
 | `mesh_quality` / `debug` | element-quality gates, opt-in MPI/Newton/IO probes |
-
-### Collapse-print validation case
-
-A designed-to-fail non-planar printed cylinder, compared against an instrumented print experiment (per-layer settlement extracted from the print photographs). This case, its experiment inputs, and the paper's verification studies live in the local (untracked) `paper/` workspace — see **Outputs** below — and run as modules from the repo root:
-
-```bash
-python -m paper.validation.collapse_print.fea.run --element DG   # or CG
-python -m paper.validation.collapse_print.fea.run --bonded-control  # bonded-DG control
-# also: --config, --run-tag, --max-steps (smoke tests); MPI-capable via mpirun
-python -m paper.validation.collapse_print.fea.mesh_qa             # mesh QA gate (serial)
-```
 
 ## CG vs DG dual-element support
 
@@ -83,20 +70,17 @@ CG additionally requires `mesh.partitioner: strip` for ghost-visibility safety.
 | [physics/](physics/) | `build_evp_cohesive_weak_form` — residual and Jacobian assembly |
 | [solver/](solver/) | Time stepper (activation → Newton → Perzyna → output, checkpointing), Newton with Armijo line search and active-DOF reduction, kinematics helpers, writers |
 | [diagnostics/](diagnostics/) | Ad-hoc analysis scripts and the phased `python -m diagnostics` runner |
-| `paper/` | Local (untracked) paper workspace, not part of the tracked repo: LaTeX source, shared figure style, and per-section subpackages (`methods/`, `verification/`, `validation/`) holding the figure code, the V&V harnesses, the collapse-print case + its experiment inputs, and **all run outputs** under `paper/output/` |
-
-The repo root above is the reusable FEA framework. Everything that exists only for the paper — the validation/verification cases, their inputs, the figure generators, and every run artifact — lives under `paper/` and is gitignored.
 
 ## Outputs
 
-All generated artifacts live in the local `paper/output/` tree. Each run writes to `paper/output/<case>/runs/run_<YYMMDD_HHMMSS>/`, where `<case>` is `barrel_vault` or `collapse_print` (collapse-print runs prefix the element family, e.g. `run_DG_<tag>/`):
+Each run writes to a timestamped directory `runs/run_<YYMMDD_HHMMSS>/` under the configured `output.directory`:
 
 - `disp.bp`, `cell_data.bp` — VTX (ADIOS2) displacement and cell-state fields, viewable in ParaView
 - `step_metrics.csv` — per-step scalars (Newton iterations, max displacement, yielding count, …)
 - `results.json` — structured metadata and layer-by-layer snapshots
 - `sim_run.log`, `settings_used.yaml` — rank-0 log and config snapshot for reproducibility
 
-Checkpoints (`paper/output/<case>/checkpoints/checkpoint_latest.npz`) support resuming long runs via `checkpoint.resume_enabled`.
+Checkpoints (`checkpoint_latest.npz`, written under `checkpoint.directory`) support resuming long runs via `checkpoint.resume_enabled`.
 
 ## Author
 
