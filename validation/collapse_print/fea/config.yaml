@@ -57,6 +57,10 @@ interface:
   # reads as jump_n > 0); flip it so delta_n > 0 is OPENING and the contact
   # branch actually engages. Verified by the open/close-branch energy test.
   cohesive_normal_flip: true
+  # Bonded-DG control. When true, inter-layer facets use the same fully
+  # bonded SIPG coupling as intra-layer facets instead of the cohesive law.
+  # The runner also exposes this as --bonded-control.
+  bonded_only: false
   # Compressive contact penalty on the closing branch of the inter-layer law:
   # K_contact = max(K_n, gamma_contact_mult * E/h). Keeps bonded layers from
   # sinking through each other when the weak cohesive K_n << bulk E/h. The

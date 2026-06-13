@@ -85,7 +85,9 @@ class CollapseFEAState:
 
 
 def load_validation_config(
-    config_path: Optional[Path] = None, element: Optional[str] = None
+    config_path: Optional[Path] = None,
+    element: Optional[str] = None,
+    bonded_control: bool = False,
 ) -> dict:
     """Load the collapse-print config with local defaults applied."""
     cfg = load_config(config_path or DEFAULT_CONFIG_PATH)
@@ -96,6 +98,10 @@ def load_validation_config(
     cfg["element"] = str(cfg.get("element", "DG")).strip().upper()
     if cfg["element"] not in ("CG", "DG"):
         raise ValueError(f"element must be CG or DG, got {cfg['element']!r}.")
+    if bonded_control:
+        if cfg["element"] != "DG":
+            raise ValueError("bonded_control requires the DG displacement space.")
+        cfg.setdefault("interface", {})["bonded_only"] = True
 
     checkpoint_cfg = {
         "save_every": 25,
@@ -129,12 +135,17 @@ def build_validation_state(
     config_path: Optional[Path] = None,
     comm=None,
     element: Optional[str] = None,
+    bonded_control: bool = False,
 ):
     """Build the full collapse-print FEA state without using main.py."""
     if comm is None:
         comm = MPI.COMM_WORLD
 
-    cfg = load_validation_config(config_path, element=element)
+    cfg = load_validation_config(
+        config_path,
+        element=element,
+        bonded_control=bonded_control,
+    )
     element_family = cfg["element"]
 
     geom = cfg["geometry"]
@@ -234,7 +245,12 @@ def build_validation_state(
         interlayer_count = int(np.count_nonzero(interior_facet_tags.values == 1))
         intralayer_count = int(np.count_nonzero(interior_facet_tags.values == 2))
         print(f"  Element family: {element_family}", flush=True)
-        print(f"  Interlayer facets (cohesive): {interlayer_count}", flush=True)
+        interlayer_role = (
+            "bonded control"
+            if cfg.get("interface", {}).get("bonded_only", False)
+            else "cohesive"
+        )
+        print(f"  Interlayer facets ({interlayer_role}): {interlayer_count}", flush=True)
         print(f"  Intralayer facets (bonded): {intralayer_count}", flush=True)
         print(
             f"  Global DOFs: {V.dofmap.index_map.size_global * V.dofmap.index_map_bs}",

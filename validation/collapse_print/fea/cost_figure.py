@@ -1,19 +1,21 @@
 # Author: Abdallah Kamhawi <Kamhawi@umich.edu>
 
-"""Computational-cost figure for the cylinder CG and DG runs (B&W + red).
+"""Computational-cost figure for the cylinder CG, bonded-DG, and DG runs.
 
 Mirrors the barrel-vault cost figure (three letter-width panels) with the two
-discretizations overlaid: (a) wall-clock per step and cumulative, (b) active
-displacement DOFs and active cells, (c) Newton iterations per step. The runs
-use the serial direct solver, so each Newton iteration costs exactly one
-linear solve. Prints a [PAPER] block with the timing decomposition.
+discretizations and the bonded-DG control overlaid: (a) wall-clock per step
+and cumulative, (b) active displacement DOFs and active cells, (c) Newton
+iterations per step. The runs use the serial direct solver, so each Newton
+iteration costs exactly one linear solve. Prints a [PAPER] block with the
+timing decomposition.
 
-Usage (after the canonical CG and DG runs):
-    python -m validation.collapse_print.fea.cost_figure [dg_run] [cg_run]
+Usage (after the canonical CG, DG, and bonded-DG runs):
+    python -m validation.collapse_print.fea.cost_figure [dg_run] [cg_run] [dgb_run]
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -41,14 +43,16 @@ FIG_DIR = CASE_DIR / "output" / "figures"
 
 COLOR_CG = "#000000"
 COLOR_DG = "#CC2222"
+COLOR_DGB = "#777777"
 COLOR_REF = "#777777"
 LABEL_SIZE = 10
 FONT_SIZE = 8
 
 
 def _latest_run(element: str) -> Path:
+    pattern = "run_DGB_*" if element == "DGB" else f"run_{element}_*"
     runs = sorted(
-        (CASE_DIR / "fea" / "output").glob(f"run_{element}_*"),
+        (CASE_DIR / "fea" / "output").glob(pattern),
         key=lambda p: p.stat().st_mtime,
     )
     if not runs:
@@ -73,10 +77,22 @@ def _metrics(run_dir: Path) -> dict:
     }
 
 
-def main():
-    dg_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else _latest_run("DG")
-    cg_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else _latest_run("CG")
-    dg, cg = _metrics(dg_dir), _metrics(cg_dir)
+def _build_arg_parser():
+    parser = argparse.ArgumentParser(
+        description="Create the collapse-print computational-cost figure."
+    )
+    parser.add_argument("dg_run", nargs="?", type=Path, default=None)
+    parser.add_argument("cg_run", nargs="?", type=Path, default=None)
+    parser.add_argument("dgb_run", nargs="?", type=Path, default=None)
+    return parser
+
+
+def main(argv=None):
+    args = _build_arg_parser().parse_args(argv)
+    dg_dir = args.dg_run or _latest_run("DG")
+    cg_dir = args.cg_run or _latest_run("CG")
+    dgb_dir = args.dgb_run or _latest_run("DGB")
+    dg, cg, dgb = _metrics(dg_dir), _metrics(cg_dir), _metrics(dgb_dir)
 
     fig = new_figure(2.4, width=8.5)
     plt.rcParams.update({k: FONT_SIZE for k in (
@@ -93,16 +109,19 @@ def main():
 
     # (a) wall-clock per step (log) + cumulative (right axis)
     ax_a.plot(cg["step"], cg["step_wall"], color=COLOR_CG, lw=0.9, label="CG")
+    ax_a.plot(dgb["step"], dgb["step_wall"], color=COLOR_DGB, lw=0.9,
+              label="bonded DG")
     ax_a.plot(dg["step"], dg["step_wall"], color=COLOR_DG, lw=0.9, label="DG")
     ax_a.set_yscale("log")
     ax_a.set_xlabel("Time step")
     ax_a.set_ylabel("Wall-clock / step [s]")
     ax_a.set_xlim(1, x1)
-    ax_a.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2,
+    ax_a.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=3,
                 frameon=False, handlelength=1.4, borderaxespad=0.0,
-                columnspacing=1.0)
+                columnspacing=0.8)
     ax_aR = ax_a.twinx()
     ax_aR.plot(cg["step"], cg["cumul_wall"], "--", color=COLOR_CG, lw=1.1)
+    ax_aR.plot(dgb["step"], dgb["cumul_wall"], "--", color=COLOR_DGB, lw=1.1)
     ax_aR.plot(dg["step"], dg["cumul_wall"], "--", color=COLOR_DG, lw=1.1)
     ax_aR.set_ylabel("Cumulative [s]")
     ax_aR.set_ylim(0, None)
@@ -110,13 +129,16 @@ def main():
 
     # (b) active DOFs (left) + active cells (right, identical schedules)
     ax_b.plot(cg["step"], cg["active_dofs"] / 1e3, color=COLOR_CG, lw=1.4)
+    ax_b.plot(dgb["step"], dgb["active_dofs"] / 1e3, color=COLOR_DGB, lw=1.0)
     ax_b.plot(dg["step"], dg["active_dofs"] / 1e3, color=COLOR_DG, lw=1.4)
     for m in (cg, dg):
         ax_b.axhline(m["active_dofs"][-1] / 1e3, color=COLOR_REF, lw=0.6,
                      linestyle="--")
-    ax_b.text(5, dg["active_dofs"][-1] / 1e3 + 0.6, "25,344 DG",
+    ax_b.text(5, dg["active_dofs"][-1] / 1e3 + 0.6,
+              f"{int(dg['active_dofs'][-1]):,} DG/DGB",
               ha="left", va="bottom", fontsize=FONT_SIZE - 1, color=COLOR_DG)
-    ax_b.text(5, cg["active_dofs"][-1] / 1e3 + 0.6, "6,912 CG",
+    ax_b.text(5, cg["active_dofs"][-1] / 1e3 + 0.6,
+              f"{int(cg['active_dofs'][-1]):,} CG",
               ha="left", va="bottom", fontsize=FONT_SIZE - 1, color=COLOR_CG)
     ax_b.set_xlabel("Time step")
     ax_b.set_ylabel(r"Active DOFs [$\times10^3$]")
@@ -133,15 +155,17 @@ def main():
     # (c) Newton iterations per step (direct solver: one linear solve each)
     ax_c.plot(cg["step"], cg["newton"], color=COLOR_CG, lw=1.0,
               drawstyle="steps-mid", label="CG")
+    ax_c.plot(dgb["step"], dgb["newton"], color=COLOR_DGB, lw=1.0,
+              drawstyle="steps-mid", label="bonded DG")
     ax_c.plot(dg["step"], dg["newton"], color=COLOR_DG, lw=1.0,
               drawstyle="steps-mid", label="DG")
     ax_c.set_xlabel("Time step")
     ax_c.set_ylabel("Newton iterations")
     ax_c.set_xlim(1, x1)
-    ax_c.set_ylim(0, dg["newton"].max() + 2)
-    ax_c.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2,
+    ax_c.set_ylim(0, max(cg["newton"].max(), dgb["newton"].max(), dg["newton"].max()) + 2)
+    ax_c.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=3,
                 frameon=False, handlelength=1.4, borderaxespad=0.0,
-                columnspacing=1.0)
+                columnspacing=0.8)
 
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     paths = [FIG_DIR / f"cost_cylinder.{e}" for e in ("png", "pdf")]
@@ -151,7 +175,7 @@ def main():
         print(f"wrote {p}")
 
     # [PAPER] numbers
-    for tag, m in (("DG", dg), ("CG", cg)):
+    for tag, m in (("DG", dg), ("bonded DG", dgb), ("CG", cg)):
         total = m["cumul_wall"][-1]
         tn, tp = m["t_newton"].sum(), m["t_perzyna"].sum()
         tj, ti = m["t_proj"].sum(), m["t_io"].sum()
@@ -162,6 +186,9 @@ def main():
               f"Newton iters {int(m['newton'].sum())}")
     print(f"[PAPER] DG/CG wall ratio: "
           f"{dg['cumul_wall'][-1]/cg['cumul_wall'][-1]:.1f}x")
+    print(f"[PAPER] bondedDG/CG wall ratio: "
+          f"{dgb['cumul_wall'][-1]/cg['cumul_wall'][-1]:.1f}x | "
+          f"DG/bondedDG wall ratio: {dg['cumul_wall'][-1]/dgb['cumul_wall'][-1]:.1f}x")
 
 
 if __name__ == "__main__":

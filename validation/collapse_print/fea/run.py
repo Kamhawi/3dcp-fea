@@ -246,8 +246,11 @@ def _run_case(state, run_tag, output_paths, simulation_start_time=None):
         out_func.x.petsc_vec.pointwiseMult(inv_diag_proj, b_strain)
         out_func.x.scatter_forward()
 
-    # Inter-layer damage diagnostics (DG only: CG has no cohesive interfaces).
-    track_damage = element == "DG"
+    # Inter-layer damage diagnostics (DG cohesive only: CG and bonded-DG
+    # controls have no cohesive interfaces).
+    track_damage = element == "DG" and not bool(
+        cfg.get("interface", {}).get("bonded_only", False)
+    )
     if track_damage:
         (
             n_il,
@@ -887,6 +890,14 @@ def _build_arg_parser():
         default=None,
         help="Cap the number of steps (smoke testing).",
     )
+    parser.add_argument(
+        "--bonded-control",
+        action="store_true",
+        help=(
+            "Run the DG bonded-interface control: inter-layer facets receive "
+            "the intra-layer SIPG coupling instead of the cohesive law."
+        ),
+    )
     return parser
 
 
@@ -899,7 +910,14 @@ def main(argv: Optional[Iterable[str]] = None):
     simulation_start_time = time.time()
 
     element = args.element.upper() if args.element else None
-    state = build_validation_state(config_path=args.config, comm=comm, element=element)
+    if args.bonded_control:
+        element = "DG"
+    state = build_validation_state(
+        config_path=args.config,
+        comm=comm,
+        element=element,
+        bonded_control=args.bonded_control,
+    )
     if args.max_steps is not None:
         state.cfg["time_stepping"]["max_steps"] = int(args.max_steps)
 
@@ -908,7 +926,12 @@ def main(argv: Optional[Iterable[str]] = None):
     else:
         base = build_run_tag() if comm.rank == 0 else None
         base = comm.bcast(base, root=0)
-        run_tag = f"{state.element}_{base}"
+        family_tag = (
+            "DGB"
+            if state.cfg.get("interface", {}).get("bonded_only", False)
+            else state.element
+        )
+        run_tag = f"{family_tag}_{base}"
 
     output_paths = _prepare_output_bundle(state.cfg, run_tag, comm)
 

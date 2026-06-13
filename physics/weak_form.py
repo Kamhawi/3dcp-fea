@@ -135,110 +135,124 @@ def build_evp_cohesive_weak_form(
         else:
             alpha_facet_cohesive = ufl.min_value(alpha("+"), alpha("-"))
 
+        bonded_only = bool(interface_cfg.get("bonded_only", False))
+
         # ``ufl.jump(u)`` is the displacement discontinuity across an interior
-        # facet. It drives cohesive opening/sliding laws on dS(1).
-        #
-        # Normal-sign convention. ``jump_n = <[[u]], n("+")>`` is invariant to
-        # the DOLFINx +/- swap, but whether jump_n > 0 reads as OPENING or as
-        # CLOSING (interpenetration) depends on the mesh's facet/cell ordering.
-        # On some meshes (the non-planar cylinder among them) it lands inverted:
-        # interpenetrating layers give jump_n > 0, so the contact branch
-        # (min(jump_n,0)) never engages and the cohesive law accrues spurious
-        # opening damage while layers sink through each other. ``cohesive_normal_flip``
-        # flips the interface normal so that delta_n > 0 is reliably OPENING.
-        # Default False preserves the established barrel-vault / verification
-        # behavior; the cylinder sets it True.
-        cohesive_normal_flip = bool(interface_cfg.get("cohesive_normal_flip", False))
-        n_il = -n("+") if cohesive_normal_flip else n("+")
+        # facet. It drives cohesive opening/sliding laws on dS(1), unless the
+        # bonded-DG control is requested. In that control every interior facet
+        # receives the same fully bonded SIPG treatment used for intra-layer
+        # facets; this isolates cohesive-interface physics from the DG space
+        # and activation/discretization machinery.
         jump_u = ufl.jump(u)
-        jump_n_scalar = ufl.dot(jump_u, n_il)
-        delta_n_open = ufl.max_value(jump_n_scalar, 0.0)
-        delta_t = jump_u - jump_n_scalar * n_il
-        delta_t_sq = ufl.inner(delta_t, delta_t)
 
-        tau_0_pa = material_cfg["tau_0"]
-        a_thix_pa_s = material_cfg["A_thix"]
-        g_i_c = interface_cfg["G_Ic"]
-        g_ii_c = interface_cfg["G_IIc"]
-        nozzle_pressure_pa = interface_cfg["nozzle_pressure"]
-        residual_stiffness_ratio = interface_cfg.get("residual_stiffness_ratio", 0.01)
-        k_min_mult = interface_cfg.get("K_min_mult", 0.1)
+        if not bonded_only:
+            # Normal-sign convention. ``jump_n = <[[u]], n("+")>`` is invariant to
+            # the DOLFINx +/- swap, but whether jump_n > 0 reads as OPENING or as
+            # CLOSING (interpenetration) depends on the mesh's facet/cell ordering.
+            # On some meshes (the non-planar cylinder among them) it lands inverted:
+            # interpenetrating layers give jump_n > 0, so the contact branch
+            # (min(jump_n,0)) never engages and the cohesive law accrues spurious
+            # opening damage while layers sink through each other. ``cohesive_normal_flip``
+            # flips the interface normal so that delta_n > 0 is reliably OPENING.
+            # Default False preserves the established barrel-vault / verification
+            # behavior; the cylinder sets it True.
+            cohesive_normal_flip = bool(interface_cfg.get("cohesive_normal_flip", False))
+            n_il = -n("+") if cohesive_normal_flip else n("+")
+            jump_n_scalar = ufl.dot(jump_u, n_il)
+            delta_n_open = ufl.max_value(jump_n_scalar, 0.0)
+            delta_t = jump_u - jump_n_scalar * n_il
+            delta_t_sq = ufl.inner(delta_t, delta_t)
 
-        t_open_facet = abs(birth_time_func("+") - birth_time_func("-"))
-        tau_sub_pa_facet = tau_0_pa + a_thix_pa_s * t_open_facet
-        p_deposit_pa = nozzle_pressure_pa
-        phi_facet = p_deposit_pa / ufl.max_value(tau_sub_pa_facet, 1.0e-12)
-        # Bond quality from nozzle-pressure penetration index:
-        #   beta = 1 - exp(-phi)
-        beta_bond_facet = 1.0 - ufl.exp(-phi_facet)
-        beta_bond_facet = ufl.min_value(1.0, ufl.max_value(beta_bond_facet, 1.0e-8))
+            tau_0_pa = material_cfg["tau_0"]
+            a_thix_pa_s = material_cfg["A_thix"]
+            g_i_c = interface_cfg["G_Ic"]
+            g_ii_c = interface_cfg["G_IIc"]
+            nozzle_pressure_pa = interface_cfg["nozzle_pressure"]
+            residual_stiffness_ratio = interface_cfg.get("residual_stiffness_ratio", 0.01)
+            k_min_mult = interface_cfg.get("K_min_mult", 0.1)
 
-        g_i_c_interface = ufl.max_value(beta_bond_facet * g_i_c, 1.0e-12)
-        g_ii_c_interface = ufl.max_value(beta_bond_facet * g_ii_c, 1.0e-12)
+            t_open_facet = abs(birth_time_func("+") - birth_time_func("-"))
+            tau_sub_pa_facet = tau_0_pa + a_thix_pa_s * t_open_facet
+            p_deposit_pa = nozzle_pressure_pa
+            phi_facet = p_deposit_pa / ufl.max_value(tau_sub_pa_facet, 1.0e-12)
+            # Bond quality from nozzle-pressure penetration index:
+            #   beta = 1 - exp(-phi)
+            beta_bond_facet = 1.0 - ufl.exp(-phi_facet)
+            beta_bond_facet = ufl.min_value(1.0, ufl.max_value(beta_bond_facet, 1.0e-8))
 
-        sigma_bond = beta_bond_facet * ufl.avg(materials.sigma_y)
-        tau_bond = beta_bond_facet * ufl.avg(materials.tau_y)
+            g_i_c_interface = ufl.max_value(beta_bond_facet * g_i_c, 1.0e-12)
+            g_ii_c_interface = ufl.max_value(beta_bond_facet * g_ii_c, 1.0e-12)
 
-        K_n = sigma_bond * sigma_bond / (2.0 * g_i_c_interface)
-        K_t = tau_bond * tau_bond / (2.0 * g_ii_c_interface)
-        K_min = k_min_mult * ufl.avg(materials.E) / h
-        K_n = ufl.max_value(K_n, K_min)
-        K_t = ufl.max_value(K_t, K_min)
+            sigma_bond = beta_bond_facet * ufl.avg(materials.sigma_y)
+            tau_bond = beta_bond_facet * ufl.avg(materials.tau_y)
 
-        # Exponential damage driven by mode-I and mode-II displacement energies.
-        delta_n_sq = delta_n_open * delta_n_open
-        damage_arg_n = delta_n_sq / ufl.max_value(
-            2.0 * g_i_c_interface / ufl.max_value(K_n, 1.0e-12), 1.0e-12
-        )
-        damage_arg_t = delta_t_sq / ufl.max_value(
-            2.0 * g_ii_c_interface / ufl.max_value(K_t, 1.0e-12), 1.0e-12
-        )
-        damage = 1.0 - ufl.exp(-(damage_arg_n + damage_arg_t))
-        damage = ufl.min_value(1.0, ufl.max_value(damage, 0.0))
-        # Enforce damage irreversibility via per-cell history variable.
-        damage = ufl.max_value(damage, ufl.max_value(materials.damage_max("+"), materials.damage_max("-")))
+            K_n = sigma_bond * sigma_bond / (2.0 * g_i_c_interface)
+            K_t = tau_bond * tau_bond / (2.0 * g_ii_c_interface)
+            K_min = k_min_mult * ufl.avg(materials.E) / h
+            K_n = ufl.max_value(K_n, K_min)
+            K_t = ufl.max_value(K_t, K_min)
 
-        K_n_res = residual_stiffness_ratio * K_n
-        K_t_res = residual_stiffness_ratio * K_t
-
-        # Cohesive traction law with:
-        # - opening response in the normal direction,
-        # - compressive contact-like penalty for negative normal jump,
-        # - tangential traction with damage-softened stiffness.
-        T_n = ((1.0 - damage) * K_n + damage * K_n_res) * delta_n_open + K_n * ufl.min_value(
-            jump_n_scalar, 0.0
-        )
-        T_t = ((1.0 - damage) * K_t + damage * K_t_res) * delta_t
-        T_cohesive = T_n * n_il + T_t
-
-        # Cohesive traction virtual work on inter-layer facets.
-        F += ufl.inner(alpha_facet_cohesive * T_cohesive, ufl.jump(v)) * dS(1)
-        # Stiff compressive contact penalty (opt-in via gamma_contact_mult).
-        # Bonded layers rest on one another, but the cohesive K_n can fall orders
-        # of magnitude below the bulk E/h for low-modulus fresh material, letting
-        # the layer above sink through the interface. This extra penalty on the
-        # closing branch (jump_n < 0) restores a bulk-scale contact stiffness.
-        # It is weighted by alpha_facet (= min activation), so it engages only
-        # once BOTH layers are present and never clamps a free top surface to the
-        # not-yet-deposited layer above. gamma_contact_mult = 0 (default) leaves
-        # the barrel-vault formulation unchanged.
-        gamma_contact_mult = interface_cfg.get("gamma_contact_mult", 0.0)
-        if gamma_contact_mult > 0.0:
-            K_contact = gamma_contact_mult * ufl.avg(materials.E) / h
-            F += (
-                alpha_facet
-                * K_contact
-                * ufl.inner(ufl.min_value(jump_n_scalar, 0.0) * n_il, ufl.jump(v))
-                * dS(1)
+            # Exponential damage driven by mode-I and mode-II displacement energies.
+            delta_n_sq = delta_n_open * delta_n_open
+            damage_arg_n = delta_n_sq / ufl.max_value(
+                2.0 * g_i_c_interface / ufl.max_value(K_n, 1.0e-12), 1.0e-12
             )
-        # Intra-layer bonded interfaces: consistent + symmetric SIP couplings.
-        F += -ufl.inner(alpha_facet * ufl.avg(sigma_u) * n("+"), ufl.jump(v)) * dS(2)
-        F += -ufl.inner(alpha_facet * ufl.avg(sigma(v, lam, mu)) * n("+"), ufl.jump(u)) * dS(2)
-        F += alpha_facet * gamma_bonded * ufl.inner(ufl.jump(u), ufl.jump(v)) * dS(2)
-        # Jump stabilization on non-cohesive interior facets only.
-        # dS(1) excluded: cohesive law (K_n, K_t) provides interface coupling there.
+            damage_arg_t = delta_t_sq / ufl.max_value(
+                2.0 * g_ii_c_interface / ufl.max_value(K_t, 1.0e-12), 1.0e-12
+            )
+            damage = 1.0 - ufl.exp(-(damage_arg_n + damage_arg_t))
+            damage = ufl.min_value(1.0, ufl.max_value(damage, 0.0))
+            # Enforce damage irreversibility via per-cell history variable.
+            damage = ufl.max_value(damage, ufl.max_value(materials.damage_max("+"), materials.damage_max("-")))
+
+            K_n_res = residual_stiffness_ratio * K_n
+            K_t_res = residual_stiffness_ratio * K_t
+
+            # Cohesive traction law with:
+            # - opening response in the normal direction,
+            # - compressive contact-like penalty for negative normal jump,
+            # - tangential traction with damage-softened stiffness.
+            T_n = ((1.0 - damage) * K_n + damage * K_n_res) * delta_n_open + K_n * ufl.min_value(
+                jump_n_scalar, 0.0
+            )
+            T_t = ((1.0 - damage) * K_t + damage * K_t_res) * delta_t
+            T_cohesive = T_n * n_il + T_t
+
+            # Cohesive traction virtual work on inter-layer facets.
+            F += ufl.inner(alpha_facet_cohesive * T_cohesive, ufl.jump(v)) * dS(1)
+            # Stiff compressive contact penalty (opt-in via gamma_contact_mult).
+            # Bonded layers rest on one another, but the cohesive K_n can fall orders
+            # of magnitude below the bulk E/h for low-modulus fresh material, letting
+            # the layer above sink through the interface. This extra penalty on the
+            # closing branch (jump_n < 0) restores a bulk-scale contact stiffness.
+            # It is weighted by alpha_facet (= min activation), so it engages only
+            # once BOTH layers are present and never clamps a free top surface to the
+            # not-yet-deposited layer above. gamma_contact_mult = 0 (default) leaves
+            # the barrel-vault formulation unchanged.
+            gamma_contact_mult = interface_cfg.get("gamma_contact_mult", 0.0)
+            if gamma_contact_mult > 0.0:
+                K_contact = gamma_contact_mult * ufl.avg(materials.E) / h
+                F += (
+                    alpha_facet
+                    * K_contact
+                    * ufl.inner(ufl.min_value(jump_n_scalar, 0.0) * n_il, ufl.jump(v))
+                    * dS(1)
+                )
+
+        # Bonded interfaces: consistent + symmetric SIP couplings.  The normal
+        # DG path bonds only intra-layer facets, while the bonded-control path
+        # deliberately bonds all interior facets, including former cohesive
+        # inter-layer facets and generic interior facets.
+        dS_bonded = (dS(0) + dS(1) + dS(2)) if bonded_only else dS(2)
+        F += -ufl.inner(alpha_facet * ufl.avg(sigma_u) * n("+"), ufl.jump(v)) * dS_bonded
+        F += -ufl.inner(alpha_facet * ufl.avg(sigma(v, lam, mu)) * n("+"), jump_u) * dS_bonded
+        F += alpha_facet * gamma_bonded * ufl.inner(jump_u, ufl.jump(v)) * dS_bonded
+
+        # Jump stabilization on non-cohesive interior facets only.  In the
+        # bonded-control path, the former dS(1) facets are non-cohesive too.
         gamma_safe = 0.05 * ufl.avg(materials.E) / h
-        F += alpha_facet * gamma_safe * ufl.inner(ufl.jump(u), ufl.jump(v)) * (dS(0) + dS(2))
+        dS_stab = (dS(0) + dS(1) + dS(2)) if bonded_only else (dS(0) + dS(2))
+        F += alpha_facet * gamma_safe * ufl.inner(jump_u, ufl.jump(v)) * dS_stab
 
     # Weak Dirichlet (Nitsche-like) boundary terms on ds(1) (CG and DG).
     F += -alpha * ufl.inner(sigma_u * n, v) * ds(1)

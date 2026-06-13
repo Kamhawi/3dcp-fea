@@ -57,11 +57,12 @@ A designed-to-fail non-planar printed cylinder, compared against an instrumented
 
 ```bash
 python -m validation.collapse_print.fea.run --element DG   # or CG
+python -m validation.collapse_print.fea.run --bonded-control  # bonded-DG control
 # also: --config, --run-tag, --max-steps (smoke tests); MPI-capable via mpirun
 python -m validation.collapse_print.fea.mesh_qa             # mesh QA gate (serial)
 ```
 
-Figures (after canonical CG **and** DG runs):
+Figures (after canonical CG, DG, and bonded-DG runs):
 
 ```bash
 python -m validation.collapse_print.fea.cg_dg_figure
