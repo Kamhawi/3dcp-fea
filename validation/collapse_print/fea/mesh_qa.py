@@ -35,7 +35,9 @@ from mesh import (
 
 CASE_DIR = Path(__file__).resolve().parents[1]
 SLICING_JSON = CASE_DIR / "slicing.json"
-OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+OUTPUT_DIR = (
+    Path(__file__).resolve().parents[3] / "paper" / "output" / "collapse_print" / "qa"
+)
 
 N_LAYERS = 11
 LAYER_HEIGHT_MM = 9.0

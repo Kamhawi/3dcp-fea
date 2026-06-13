@@ -100,7 +100,10 @@ def build_output_paths(
     """
     output_cfg = cfg.get("output", {})
     tag = run_tag or build_run_tag()
-    out_dir = Path(output_cfg.get("directory", "output"))
+    project_root = Path(__file__).resolve().parents[1]
+    out_dir = _resolve_relative_to(
+        project_root, output_cfg.get("directory", "paper/output/barrel_vault/runs")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_dir = out_dir / f"run_{tag}"
@@ -144,11 +147,14 @@ def get_checkpoint_dir(cfg: Dict[str, Any]) -> Path:
     """Resolve and create the checkpoint directory.
 
     The directory is taken from ``checkpoint.directory`` and defaults to
-    ``"checkpoints"``. Relative paths are resolved against the project root.
+    ``"paper/output/barrel_vault/checkpoints"``. Relative paths are resolved
+    against the project root.
     """
     project_root = Path(__file__).resolve().parents[1]
     checkpoint_cfg = cfg.get("checkpoint", {})
-    checkpoint_dir_cfg = checkpoint_cfg.get("directory", "checkpoints")
+    checkpoint_dir_cfg = checkpoint_cfg.get(
+        "directory", "paper/output/barrel_vault/checkpoints"
+    )
     checkpoint_dir = _resolve_relative_to(project_root, checkpoint_dir_cfg)
     try:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)

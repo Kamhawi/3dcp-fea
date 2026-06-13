@@ -1,0 +1,175 @@
+{
+  "scale": {
+    "od_reference_mm": {
+      "mean": 226.7064048959389,
+      "lo": 223.86782129997525,
+      "hi_with_squash": 239.52961230505682,
+      "source": "mesh_node_table.npz sheet-0 outer nodes"
+    },
+    "plate_fit": {
+      "x_c": 941.1784944803637,
+      "z_c": 858.6640392424472,
+      "a": 367.0734213403008,
+      "b": 146.73826754743396,
+      "rms_px": 0.8066033178315907,
+      "n_used": 563,
+      "span_px": 566.0
+    },
+    "rim_fit": {
+      "x_c": 937.7750957313441,
+      "z_c": 842.8624653335006,
+      "a": 356.1174543235446,
+      "b": 135.6608498447054,
+      "rms_px": 1.4811395865014165,
+      "n_used": 564,
+      "span_px": 569.0
+    },
+    "guards_ok": true,
+    "diameter_px": 734.1468426806016,
+    "mm_per_px": 0.3088025333844144,
+    "camera_elevation_deg": {
+      "plate": 23.56266434611759,
+      "rim_crosscheck": 22.392175815991788
+    },
+    "standoff": {
+      "exif_focal": null,
+      "estimated_m": null,
+      "assumed_min_m": 0.5,
+      "perspective_corr_interval": [
+        1.0,
+        1.2594998202782037
+      ]
+    },
+    "px_of_9mm": {
+      "central": 26.714841487134304,
+      "lo": 24.227382987631685,
+      "hi": 35.239460287854946
+    },
+    "pitch_convention_px": 49.0,
+    "pitch_convention_mm": 16.50767795917422,
+    "corroboration": {
+      "median_fresh_band_thickness_px": 30.0
+    },
+    "tolerance": 0.05,
+    "passed": false,
+    "renormalization_preview": {
+      "note": "NOT APPLIED. Multiplying every experimental percentage by 49/px(9mm) converts the dataset to true % of h0. The simulations are natively in physical h0 units, so this rescales the sim-vs-exp comparison even though the experimental shape is unchanged.",
+      "factor_central": 1.8341864399082466,
+      "factor_interval": [
+        1.3904866760086998,
+        2.0225048667045455
+      ],
+      "L4_anchor_pct": {
+        "current": 85.71,
+        "renormalized_central": 157.2081197645358
+      }
+    },
+    "wave_tightener": {
+      "mm_per_px_vertical_scale": 0.31643937525936916,
+      "px_of_9mm_direct": 28.441466845341736,
+      "px_of_9mm_band_2sigma": [
+        27.04394583256784,
+        29.99129485566932
+      ],
+      "sigma_s_mm_per_px": 0.0081761492744423,
+      "camera_elevation_deg": 23.562664346117593,
+      "azimuth_orientation": 1,
+      "rms_px": 24.58239132580231,
+      "n_points": 604,
+      "healthy": true,
+      "note": "vertical front-face scale from the known slicing-wave rim geometry (view azimuth fixed at the config's -90 deg; the wave-phase misfit inflates the rms and is absorbed into the 2-sigma band); independent of standoff and foreshortening assumptions"
+    },
+    "px_of_9mm_frozen": {
+      "central": 28.441466845341736,
+      "lo": 27.04394583256784,
+      "hi": 29.99129485566932,
+      "basis": "wave-geometry fit (direct front-face vertical scale; standoff/foreshortening-free), 2-sigma band, inside the diameter-based interval and corroborated by the 30 px fresh-band thickness"
+    }
+  },
+  "test_A": {
+    "per_layer": {
+      "L1": {
+        "n_common": 226,
+        "median_abs_diff_px": 0.27224454095795636,
+        "frac_within_4px": 1.0,
+        "passed": true
+      },
+      "L2": {
+        "n_common": 584,
+        "median_abs_diff_px": 0.25169975312309134,
+        "frac_within_4px": 0.9623287671232876,
+        "passed": true
+      },
+      "L3": {
+        "n_common": 584,
+        "median_abs_diff_px": 0.3356053839690958,
+        "frac_within_4px": 0.9623287671232876,
+        "passed": true
+      }
+    },
+    "passed": true
+  },
+  "test_B": {
+    "per_layer": {
+      "L1": {
+        "n_columns": 226,
+        "median_abs_residual_px": 11.0,
+        "iqr_px": 1.0,
+        "passed": true,
+        "note": "k=1: median == below-plate repaint depth change (documented artifact; cross-checks the ~10 px frame-2 scan); IQR is the stability criterion"
+      },
+      "L2": {
+        "n_columns": 226,
+        "median_abs_residual_px": 0.0,
+        "iqr_px": 0.0,
+        "passed": true,
+        "note": "residual == -d(seam gaps); slip would give ~\u00b130 px"
+      },
+      "L3": {
+        "n_columns": 584,
+        "median_abs_residual_px": 0.0,
+        "iqr_px": 0.0,
+        "passed": true,
+        "note": "residual == -d(seam gaps); slip would give ~\u00b130 px"
+      }
+    },
+    "passed": true
+  },
+  "test_C": {
+    "per_layer": {
+      "L1": {
+        "n_common": 226,
+        "pearson_r": 0.41251916559656476,
+        "passed": false
+      },
+      "L2": {
+        "n_common": 584,
+        "pearson_r": 0.5001701712450876,
+        "passed": true
+      },
+      "L3": {
+        "n_common": 584,
+        "pearson_r": 0.643801648469367,
+        "passed": true
+      },
+      "L4": {
+        "n_common": 585,
+        "pearson_r": 0.7303426186553088,
+        "passed": null
+      },
+      "L5": {
+        "n_common": 586,
+        "pearson_r": 0.5554273257528688,
+        "passed": null
+      },
+      "L6": {
+        "n_common": 583,
+        "pearson_r": 0.471056640039045,
+        "passed": null
+      }
+    },
+    "passed": false,
+    "framing": "DIS measures texture motion inside stripes (material proxy); the parser measures the painted seam (apparent boundary). Level differences are expected under covering; this is a shape cross-check only."
+  },
+  "decision": "measurand_divergence_recorded"
+}

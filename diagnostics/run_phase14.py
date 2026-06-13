@@ -229,7 +229,7 @@ def main():
         if tee is not None:
             sys.stdout = tee._original
 
-        output_dir = Path("diagnostics") / "output"
+        output_dir = Path(__file__).resolve().parents[1] / "paper" / "output" / "diagnostics"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

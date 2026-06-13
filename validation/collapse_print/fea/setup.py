@@ -106,13 +106,13 @@ def load_validation_config(
     checkpoint_cfg = {
         "save_every": 25,
         "resume_enabled": False,
-        "directory": "validation/collapse_print/fea/checkpoints",
+        "directory": "paper/output/collapse_print/checkpoints",
     }
     checkpoint_cfg.update(cfg.get("checkpoint", {}))
     cfg["checkpoint"] = checkpoint_cfg
 
     output_cfg = {
-        "directory": "validation/collapse_print/fea/output",
+        "directory": "paper/output/collapse_print/runs",
         "displacement_file": "",
         "cell_data_file": "",
         "log_file": "",

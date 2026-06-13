@@ -154,16 +154,16 @@ time_stepping:
 checkpoint:
   save_every: 10             # Save every N steps (overwrites single latest checkpoint file)
   resume_enabled: false       # Resume from latest checkpoint metadata if true
-  directory: "checkpoints"   # Checkpoint directory
+  directory: "paper/output/barrel_vault/checkpoints"   # Checkpoint directory
 
 # -----------------------------------------------------------------------------
 # Output Settings
 # -----------------------------------------------------------------------------
 output:
-  directory: "output"
-  displacement_file: ""          # Optional override (blank -> disp.bp in output/run_<YYMMDD_HHMMSS>/)
-  cell_data_file: ""             # Optional override (blank -> cell_data.bp in output/run_<YYMMDD_HHMMSS>/)
-  log_file: ""                   # Optional override (blank -> sim_run.log in output/run_<YYMMDD_HHMMSS>/)
+  directory: "paper/output/barrel_vault/runs"
+  displacement_file: ""          # Optional override (blank -> disp.bp in .../runs/run_<YYMMDD_HHMMSS>/)
+  cell_data_file: ""             # Optional override (blank -> cell_data.bp in .../runs/run_<YYMMDD_HHMMSS>/)
+  log_file: ""                   # Optional override (blank -> sim_run.log in .../runs/run_<YYMMDD_HHMMSS>/)
 
 # -----------------------------------------------------------------------------
 # Mesh Quality Thresholds (all optional — sensible defaults used if absent)

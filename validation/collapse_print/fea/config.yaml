@@ -103,10 +103,10 @@ front_arc:
 checkpoint:
   save_every: 25
   resume_enabled: false
-  directory: validation/collapse_print/fea/checkpoints
+  directory: paper/output/collapse_print/checkpoints
 
 output:
-  directory: validation/collapse_print/fea/output
+  directory: paper/output/collapse_print/runs
   displacement_file: ""
   cell_data_file: ""
   log_file: ""

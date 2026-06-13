@@ -25,7 +25,12 @@ from PIL import Image
 
 CASE_DIR = Path(__file__).resolve().parent
 LABELED_DIR = CASE_DIR / "print_layers" / "labeled"
-OUTPUT_DATA_DIR = CASE_DIR / "output" / "data"
+# Frozen, non-regenerable inputs (tracked): px(9 mm) scale + seam QA snapshot.
+TRACKED_DATA_DIR = CASE_DIR / "data"
+# Regenerated outputs land in the local paper workspace.
+OUTPUT_DATA_DIR = (
+    CASE_DIR.parents[1] / "paper" / "output" / "collapse_print" / "data"
+)
 
 N_LAYERS = 11
 FRAME_PERIOD_S = 13.61
@@ -213,8 +218,8 @@ def _frame_band_edges(path: Path, frame_layer: int, params: LabelParams):
     return top, bottom, reasons
 
 
-def _load_px_of_h0(output_dir: Path):
-    checks_path = output_dir / "experiment_checks.json"
+def _load_px_of_h0():
+    checks_path = TRACKED_DATA_DIR / "experiment_checks.json"
     if checks_path.exists():
         checks = json.loads(checks_path.read_text())
         frozen = checks.get("scale", {}).get("px_of_9mm_frozen", {})
@@ -260,7 +265,7 @@ def build_experiment_dataset(
     material_edge_row_px = np.stack(frame_bottom_rows, axis=0)
     reason_text = np.stack(frame_reasons, axis=0)
 
-    px_of_h0, px_of_h0_band, scale_basis = _load_px_of_h0(output_dir)
+    px_of_h0, px_of_h0_band, scale_basis = _load_px_of_h0()
     scale_factor = PITCH_CONVENTION_PX / px_of_h0
     scale_factor_band = np.asarray(
         [PITCH_CONVENTION_PX / px_of_h0_band[1], PITCH_CONVENTION_PX / px_of_h0_band[0]],
